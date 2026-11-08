@@ -370,6 +370,7 @@ internal sealed partial class Wing
 
         _fitted = false;
         _fitTries = 0;
+        ResetDrift();
         Fit();
 
         craft.SetRotation(new Rotator(0f, yaw, 0f));
@@ -525,7 +526,8 @@ internal sealed partial class Wing
             return;
 
         Fit();
-        craft.SetLocation(at);
+        Drifted(ref fwd, ref right, ref up);
+        craft.SetLocation(at + _driftAt);
         craft.SetRotation(Geo.FromAxes(fwd, right, up));
     }
 
@@ -675,6 +677,7 @@ internal sealed partial class Wing
     {
         bool boost = boosting && hover < 0.5f;
         float ease = Ease.Follow(5f, dt);
+        DriftStep(hover, velocity, ground, dt);
 
         bool fast = hover < 0.5f && velocity.LengthSquared() > 4000f * 4000f;
         bool trails = boost || fast && (_trailsOn ? g > 1.4f : g > 1.7f);
@@ -1087,6 +1090,13 @@ internal sealed partial class Wing
     private Vector3 _arriveLast;
     private Vector3 _arriveVel;
 
+    // Taking over from the escort for a pickup. It eases out of the pose and drift it had instead of snapping.
+    private const float HandSeconds = 0.7f;
+    private const float HandDrag = 4f;
+    private float _handT = -1f;
+    private Rotator _handFrom;
+    private Vector3 _handVel;
+
     private const float GrappleReach = 450f;
     private const float GrappleMost = 5f;
 
@@ -1129,6 +1139,7 @@ internal sealed partial class Wing
         _arriveLast = _from;
         _arriveVel = Vector3.Zero;
         _grappleT = -1f;
+        _handT = -1f;
         Vector3 toward = hover - _from;
         _arriveYaw = MathF.Atan2(toward.Y, toward.X) * Deg;
 
@@ -1155,8 +1166,16 @@ internal sealed partial class Wing
 
         _arriveT += dt;
         float t = Math.Clamp(_arriveT / ArriveSeconds, 0f, 1f);
-        if (_grappleT < 0f)
+        // Off the escort it already picked its spot, so it stays there and lets its drift die off.
+        if (_handT >= 0f)
+        {
+            _arriveAt += _handVel * dt;
+            _handVel *= MathF.Exp(-HandDrag * dt);
+        }
+        else if (_grappleT < 0f)
+        {
             _arriveAt = Vector3.Lerp(_arriveAt, HoverPoint(pawn), Ease.Follow(3f, dt));
+        }
 
         Vector3 p0 = _from;
         var flatIn = new Vector3(_arriveAt.X - _from.X, _arriveAt.Y - _from.Y, 0f);
@@ -1189,6 +1208,17 @@ internal sealed partial class Wing
         float climb = speed > 200f ? Math.Clamp(MathF.Asin(Math.Clamp(_arriveVel.Z / speed, -1f, 1f)) * Deg * 0.5f, -15f, 12f) : 0f;
         float pitch = climb * (1f - settle) + 9f * MathF.Sin(MathF.PI * settle);
         float roll = _arriveBank * (1f - settle);
+        if (_handT >= 0f)
+        {
+            _handT += dt;
+            float k = Ease.Smooth(_handT / HandSeconds);
+            yaw = _handFrom.Yaw + Geo.WrapDegrees(yaw - _handFrom.Yaw) * k;
+            pitch = _handFrom.Pitch + Geo.WrapDegrees(pitch - _handFrom.Pitch) * k;
+            roll = _handFrom.Roll + Geo.WrapDegrees(roll - _handFrom.Roll) * k;
+            if (k >= 1f)
+                _handT = -1f;
+        }
+
         Geo.Axes(new Rotator(pitch, yaw, roll), out Vector3 fwd, out Vector3 right, out Vector3 up);
         Place(at, fwd, right, up);
 

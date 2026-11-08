@@ -702,18 +702,7 @@ internal sealed partial class Wing
         _fm.Rates = Vector3.Zero;
         bool liftOff = input.Lift > 0.1f || !_fm.HoverWanted || input.Move.LengthSquared() > 0.04f;
         if (!liftOff)
-        {
-            float want = input.Heading;
-            float have = MathF.Atan2(_fm.Forward.Y, _fm.Forward.X);
-            float d = MathF.IEEERemainder(want - have, MathF.Tau);
-            float yaw = have + d * Ease.Follow(2.5f, dt);
-            Vector3 up = _fm.Up;
-            var fwd = new Vector3(MathF.Cos(yaw), MathF.Sin(yaw), 0f);
-            fwd = Vector3.Normalize(fwd - up * Vector3.Dot(fwd, up));
-            _fm.Forward = fwd;
-            _fm.Right = Vector3.Cross(up, fwd);
             return;
-        }
 
         _landed = false;
         _fm.Velocity = new Vector3(0f, 0f, 300f);
@@ -801,6 +790,11 @@ internal sealed partial class Wing
         _fm.Rates = Vector3.Zero;
         float yaw = MathF.Atan2(_fm.Forward.Y, _fm.Forward.X);
         _fm.Place(_fm.Position, yaw, Vector3.Zero);
+        // Aim goes back on the nose so it doesn't turn on lift off. Mouse aim moves the gap into the look
+        // so the view stays put, direct already has its camera on the nose.
+        if (!Opt.Direct)
+            _lookYaw = Geo.WrapDegrees(_lookYaw + _aimYaw - yaw * Deg);
+        _aimYaw = yaw * Deg;
         _fm.HoverWanted = true;
         _fm.Hover = 1f;
         _shake = MathF.Max(_shake, 0.25f);

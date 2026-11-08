@@ -11,6 +11,7 @@ internal static class Opt
     public static Switch FlyIn = null!;
     public static Switch Grapple = null!;
     public static Switch Assist = null!;
+    public static Switch HoverDrift = null!;
     public static Dial TopSpeed = null!;
     public static Switch Crashes = null!;
     public static Switch EscortOnBail = null!;
@@ -70,6 +71,8 @@ internal static class Opt
             "When it flies in and you're on the ground, Batman grapples up into the cockpit instead of appearing in it.");
         Assist = Add(flight, "assist", "FLIGHT ASSIST", true,
             "Auto levels the wings, stops you stalling and switches to VTOL hover at low speed. Turn off for no help at all, you can stall and fall.");
+        HoverDrift = Add(flight, "hover_drift", "HOVER DRIFT", true,
+            "The Batwing bobs and sways a little while it hovers, like it's holding itself up on its jets. It's only the look of it. Steering and aim are not touched. Turn off for a dead still hover.");
         TopSpeed = Add(flight, "top_speed", "TOP SPEED", 90f, 50f, 140f, 5f, v => Fmt.Whole(v) + " M/S",
             "Max speed at full throttle. Afterburner adds about 40% for a few seconds. The city may stutter a little as it loads in at high speed.");
         Crashes = Add(flight, "crashes", "CRASHES", true,

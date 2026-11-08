@@ -146,7 +146,8 @@ internal sealed partial class Wing
         Vector2 rs = pad ? PadStick() : Vector2.Zero;
         Vector2 rate = new Vector2(PadTurnRate, PadPitchRate) * (Opt.AimSpeed.Number * dt);
 
-        bool look = !Shared.AnyMenuOpen && (Down(VkMButton) || Pad.Button("lb"));
+        // Parked it shouldn't spin on the spot, so looking around is free look until it lifts off.
+        bool look = !Shared.AnyMenuOpen && (Down(VkMButton) || Pad.Button("lb") || _landed);
         if (look)
         {
             Vector2 t = turn + rs * (PadLookRate * Opt.AimSpeed.Number * dt);
@@ -283,9 +284,12 @@ internal sealed partial class Wing
         int view = Opt.Camera.Index;
         if (view == 2)
         {
-            eye = WorldPoint(p, _seat + CockpitEye);
+            // The eye sits in the model, so it rides the hover drift with it or the canopy would swim around it.
+            Vector3 cf = _fwd, cr = _right, cu = _up;
+            Drifted(ref cf, ref cr, ref cu);
+            Vector3 Frame(Vector3 v) => cf * v.X + cr * v.Y + cu * v.Z;
+            eye = p + _driftAt + Frame(_seat + CockpitEye);
             Geo.Axes(new Rotator(CockpitTilt + _lookPitch, _lookYaw, 0f), out Vector3 lx, out Vector3 ly, out Vector3 lz);
-            Vector3 Frame(Vector3 v) => _fwd * v.X + _right * v.Y + _up * v.Z;
             rot = Geo.FromAxes(Frame(lx), Frame(ly), Frame(lz));
         }
         else

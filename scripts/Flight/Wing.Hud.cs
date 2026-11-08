@@ -119,7 +119,9 @@ internal sealed partial class Wing
         if (_escortFoe is { IsValid: true } foe && Foe(foe))
             Brackets(foe.Location, U(14f), Palette.Text, t);
 
-        if (WorldView.ToScreen(_fm.Position, out Vector2 bw))
+        string away = World.Pawn is { IsValid: true } me ? Fmt.Whole(Vector3.Distance(me.Location, _fm.Position) / Metre) + " M" : "";
+        PointerBounds(y + h, out float left, out float right, out float top, out float bottom);
+        if (WorldView.ToScreen(_fm.Position, out Vector2 bw) && bw.X >= left && bw.X <= right && bw.Y >= top && bw.Y <= bottom)
         {
             float r = U(7f);
             Shapes.QueueLine(bw.X, bw.Y - r, bw.X + r, bw.Y, t);
@@ -127,9 +129,53 @@ internal sealed partial class Wing
             Shapes.QueueLine(bw.X, bw.Y + r, bw.X - r, bw.Y, t);
             Shapes.QueueLine(bw.X - r, bw.Y, bw.X, bw.Y - r, t);
             Shapes.FlushLines(Palette.Hud);
-            if (World.Pawn is { IsValid: true } me)
-                TextMid(bw.X + U(14f), bw.Y, Fmt.Whole(Vector3.Distance(me.Location, _fm.Position) / Metre) + " M", Palette.Hud, Sc(0.4f));
+            if (away.Length > 0)
+                TextMid(bw.X + U(14f), bw.Y, away, Palette.Hud, Sc(0.4f));
         }
+        else
+        {
+            EscortPointer(left, right, top, bottom, away);
+        }
+    }
+
+    // The pointer keeps clear of the screen edge and stays under the escort card.
+    private static void PointerBounds(float card, out float left, out float right, out float top, out float bottom)
+    {
+        float m = U(56f);
+        left = m;
+        right = Gfx.W - m;
+        top = MathF.Max(m, card + U(28f));
+        bottom = Gfx.H - m;
+    }
+
+    // Off screen or behind the camera, an arrow on the edge shows which way to turn to find it.
+    private void EscortPointer(float left, float right, float top, float bottom, string away)
+    {
+        Vector3 v = _fm.Position - WorldView.Eye;
+        var d = new Vector2(Vector3.Dot(v, WorldView.Right), -Vector3.Dot(v, WorldView.Up));
+        d = d.LengthSquared() > 1e-4f ? Vector2.Normalize(d) : new Vector2(0f, 1f);
+
+        float cx = Gfx.W * 0.5f, cy = Gfx.H * 0.5f;
+        float sx = d.X > 1e-4f ? (right - cx) / d.X : d.X < -1e-4f ? (left - cx) / d.X : float.MaxValue;
+        float sy = d.Y > 1e-4f ? (bottom - cy) / d.Y : d.Y < -1e-4f ? (top - cy) / d.Y : float.MaxValue;
+        Vector2 at = new Vector2(cx, cy) + d * MathF.Max(0f, MathF.Min(sx, sy));
+
+        float s = U(11f);
+        var n = new Vector2(-d.Y, d.X);
+        Vector2 back = at - d * (s * 0.6f);
+        Vector2 tip = at + d * s, b1 = back + n * (s * 0.8f), b2 = back - n * (s * 0.8f);
+        float o = U(3f);
+        Vector2 ot = at + d * (s + o * 1.6f), o1 = back - d * o + n * (s * 0.8f + o * 1.4f), o2 = back - d * o - n * (s * 0.8f + o * 1.4f);
+        Shapes.Triangle(ot.X, ot.Y, o1.X, o1.Y, o2.X, o2.Y, Palette.Screen, 0.7f);
+        Shapes.Triangle(tip.X, tip.Y, b1.X, b1.Y, b2.X, b2.Y, Palette.Hud, 0.95f);
+
+        if (away.Length == 0)
+            return;
+
+        // Sits on the inside of the arrow, pushed far enough along that the text never covers it.
+        float scale = Sc(0.4f);
+        float reach = s * 0.6f + U(8f) + MathF.Abs(d.X) * TextW(away, scale) * 0.5f + MathF.Abs(d.Y) * TextH(scale) * 0.5f;
+        TextCentre(at.X - d.X * reach, at.Y - d.Y * reach, away, Palette.Hud, scale);
     }
 
     private void Markers()

@@ -141,6 +141,9 @@ internal sealed partial class Wing
         _arriveYaw = _pickupYaw * Deg;
         _arriveBank = 0f;
         _grappleT = -1f;
+        _handT = 0f;
+        _handFrom = Geo.FromAxes(_fwd, _right, _up);
+        _handVel = _fm.Velocity;
         Log.Info(Title + ": escort pickup at " + Geo.Position(_fm.Position) + ", " + Fmt.Whole(Vector3.Distance(batman.Location, _fm.Position) / Metre) + " m from Batman.");
     }
 
