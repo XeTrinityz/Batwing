@@ -51,8 +51,15 @@ internal sealed partial class Wing
     private double _reloadAt;
     private AkEvent? _reloadSound;
 
+    private const float WeakSlack = 250f;
+    private const double WeakEvery = 1.0;
+
     private readonly List<Actor> _foes = new();
     private readonly List<RPawnVillain> _thugs = new();
+    private readonly List<(RPawnVillain Thug, RVehicleNPC Ride)> _riders = new();
+    private readonly Dictionary<nint, Weak> _weak = new();
+
+    private readonly record struct Weak(RVehicleCar.EAPCWeakSpot Kind, Vector3? Local, double Due);
     private readonly List<Actor> _locks = new();
     private readonly Queue<Actor> _salvo = new();
     private Every _foeScan;
@@ -82,6 +89,8 @@ internal sealed partial class Wing
         _overheatUntil = 0;
         _locks.Clear();
         _salvo.Clear();
+        _weak.Clear();
+        Manned.Clear();
         _locking = false;
         _lockFull = false;
         _noWeaponsSaid = false;
@@ -110,8 +119,8 @@ internal sealed partial class Wing
         public Vector3 Look;
         public Actor? Target;
 
-        // Whether aiming may settle on a thug by itself. The escort only hits thugs it's ordered to.
-        public bool Thugs;
+        // Whether it may pick thugs, manned vehicles and APCs by itself. The escort only hits those on a strike.
+        public bool Free;
 
         public bool Homing;
     }
@@ -131,7 +140,7 @@ internal sealed partial class Wing
             Cannon = listening && (Pressed('Q') | PadPressed("rb")),
             Lock = lockHeld,
             Look = Opt.Direct ? _fm.Forward : AimDir(),
-            Thugs = true,
+            Free = true,
             Homing = Opt.CannonHoming.On,
         };
     }
@@ -149,7 +158,9 @@ internal sealed partial class Wing
             Safe.Run("batwing foes", FindFoes);
         if (orders.Look.LengthSquared() > 0.01f)
             _look = Vector3.Normalize(orders.Look);
-        Aim(craft, orders.Target, orders.Thugs);
+        _free = orders.Free;
+        _ordered = orders.Target;
+        Aim(craft, orders.Target);
 
         bool gun = orders.Gun;
         bool cannon = orders.Cannon;
@@ -188,7 +199,7 @@ internal sealed partial class Wing
         Missiles(craft, launcher, lockHeld, orders.Stack, now);
     }
 
-    private void Aim(RBatwing craft, Actor? ordered, bool thugs)
+    private void Aim(RBatwing craft, Actor? ordered)
     {
         Vector3 from = _fm.Position;
         Vector3 dir = _look;
@@ -196,18 +207,17 @@ internal sealed partial class Wing
         _aimFoe = null;
 
         // An ordered target skips the cone search, as long as it's still fair game and in sight.
-        if (ordered is { IsValid: true } && (ordered is RPawnVillain thug ? CanStrike(thug) : Foe(ordered))
-            && craft.FastTrace(ordered.Location, nose, Vector3.Zero, false))
+        if (ordered is { IsValid: true } && Strikeable(ordered) && craft.FastTrace(ordered.Location, nose, Vector3.Zero, false))
         {
             _aimFoe = ordered;
-            _aimPoint = ordered.Location;
+            _aimPoint = AimAt(ordered);
             return;
         }
 
         float best = AssistCone;
         foreach (Actor foe in _foes)
         {
-            if (!Foe(foe))
+            if (!Foe(foe) || Held(foe))
                 continue;
             Vector3 to = foe.Location - from;
             float dist = to.Length();
@@ -221,13 +231,15 @@ internal sealed partial class Wing
             }
         }
 
-        if (_aimFoe == null && thugs)
-            _aimFoe = AimThug(craft, from, dir, nose);
+        bool rider = false;
+        if (_aimFoe == null && _free)
+            _aimFoe = AimThug(craft, from, dir, nose, out rider);
 
-        // Riot rounds always lock on, like the Batmobile's. Vehicles only snap with gun assist.
-        if (_aimFoe is RPawnVillain || (_aimFoe != null && Opt.GunAssist.On))
+        // Riot rounds always lock on, like the Batmobile's, and so does a vehicle picked through the thug in
+        // it. Other vehicles only snap with gun assist.
+        if (_aimFoe is RPawnVillain || rider || (_aimFoe != null && Opt.GunAssist.On))
         {
-            _aimPoint = _aimFoe.Location;
+            _aimPoint = AimAt(_aimFoe!);
             return;
         }
 
@@ -237,45 +249,195 @@ internal sealed partial class Wing
             : from + dir * 30000f;
     }
 
-    private RPawnVillain? AimThug(RBatwing craft, Vector3 from, Vector3 dir, Vector3 nose)
+    // Aiming at a thug riding in a vehicle picks the vehicle, never riot rounds through the window.
+    private Actor? AimThug(RBatwing craft, Vector3 from, Vector3 dir, Vector3 nose, out bool rider)
     {
-        RPawnVillain? pick = null;
+        Actor? pick = null;
+        rider = false;
         float best = ThugCone;
         foreach (RPawnVillain thug in _thugs)
         {
-            if (!CanStrike(thug))
-                continue;
-            Vector3 to = thug.Location - from;
-            float dist = to.Length();
-            if (dist < 1f || dist > ThugRange)
-                continue;
-            float dot = Vector3.Dot(to / dist, dir);
-            if (dot > best && craft.FastTrace(thug.Location, nose, Vector3.Zero, false))
+            if (CanStrike(thug) && Sighted(craft, thug.Location, from, dir, nose, ref best))
             {
-                best = dot;
                 pick = thug;
+                rider = false;
+            }
+        }
+
+        foreach ((RPawnVillain thug, RVehicleNPC ride) in _riders)
+        {
+            if (Alive(thug) && Foe(ride) && Sighted(craft, thug.Location, from, dir, nose, ref best))
+            {
+                pick = ride;
+                rider = true;
             }
         }
 
         return pick;
     }
 
+    private static bool Sighted(RBatwing craft, Vector3 at, Vector3 from, Vector3 dir, Vector3 nose, ref float best)
+    {
+        Vector3 to = at - from;
+        float dist = to.Length();
+        if (dist < 1f || dist > ThugRange)
+            return false;
+        float dot = Vector3.Dot(to / dist, dir);
+        if (dot <= best || !craft.FastTrace(at, nose, Vector3.Zero, false))
+            return false;
+        best = dot;
+        return true;
+    }
+
+    // The vehicle a thug is sitting in or riding on. The foe scan reads every nearby vehicle's seats, and a thug
+    // standing on one is based on it.
+    private RVehicleNPC? Ride(RPawnVillain thug)
+    {
+        foreach ((RPawnVillain rider, RVehicleNPC ride) in _riders)
+        {
+            if (rider.Ptr == thug.Ptr)
+                return ride.IsValid ? ride : null;
+        }
+
+        return Carried(thug);
+    }
+
+    private static RVehicleNPC? Carried(RPawnVillain thug)
+    {
+        if (thug.Base is RVehicleNPC on && on.IsValid)
+            return on;
+        if (thug.DrivenVehicle is RVehicleNPC driving && driving.IsValid)
+            return driving;
+        return null;
+    }
+
+    private static bool Strikeable(Actor a) => a is RPawnVillain thug ? CanStrike(thug) : Foe(a);
+
+    private static bool Apc(Actor? a) => a is RVehicle v && (v.bHasAPCStyleWeakSpot || v is RVehicleNPC { IsMostWantedApc: true });
+
+    private Vector3 AimAt(Actor a) => WeakSpot(a) ?? a.Location;
+
+    // An APC only takes damage on its current weak spot, which the game moves around. There's no position for
+    // it to read, so the APC is asked which points round its hull count as a hit, and the middle of those is
+    // the spot. It's kept relative to the hull so it follows the APC between checks.
+    private Vector3? WeakSpot(Actor a)
+    {
+        if (a is not RVehicleCar car || !Apc(car))
+            return null;
+
+        RVehicleCar.EAPCWeakSpot kind = car.CurrentWeakSpot;
+        if (kind is RVehicleCar.EAPCWeakSpot.EAWS_NoWeakSpot or RVehicleCar.EAPCWeakSpot.EAWS_MAX)
+            return null;
+
+        double now = Clock.Now;
+        bool known = _weak.TryGetValue(car.Ptr, out Weak w);
+        bool fresh = !known || w.Kind != kind;
+        if (fresh || now >= w.Due)
+        {
+            Vector3? found = null;
+            Safe.Run("batwing weak spot", () => found = ProbeWeakSpot(car));
+            if (fresh)
+            {
+                Log.Detail(Title + ": " + car.Name + " weak spot " + kind + (found is { } l
+                    ? " found at " + Geo.Position(l) + " on the hull."
+                    : " not found, aiming at the middle."));
+            }
+
+            if (_weak.Count > 8)
+                _weak.Clear();
+            _weak[car.Ptr] = w = new Weak(kind, found, now + WeakEvery);
+        }
+
+        if (w.Local is not { } local)
+            return null;
+        Geo.Axes(car.Rotation, out Vector3 fwd, out Vector3 right, out Vector3 up);
+        return car.Location + fwd * local.X + right * local.Y + up * local.Z;
+    }
+
+    private static Vector3? ProbeWeakSpot(RVehicleCar car)
+    {
+        float half = car.GetVehicleHalfLongAxis();
+        float side = car.GetVehicleHalfWidth();
+        car.GetComponentsBoundingBox(out GameObject.FBox box);
+        if (half < 50f || side < 50f || box.IsValid == 0)
+            return null;
+
+        float low = box.Min.Z - car.Location.Z, high = box.Max.Z - car.Location.Z;
+        Geo.Axes(car.Rotation, out Vector3 fwd, out Vector3 right, out Vector3 up);
+        Vector3 sum = Vector3.Zero;
+        int hits = 0;
+        const int Long = 8, Wide = 5, Tall = 4;
+        for (int i = 0; i < Long; i++)
+        {
+            float x = -half + 2f * half * i / (Long - 1);
+            for (int j = 0; j < Wide; j++)
+            {
+                float y = -side + 2f * side * j / (Wide - 1);
+                for (int k = 0; k < Tall; k++)
+                {
+                    float z = low + (high - low) * k / (Tall - 1);
+                    if (!car.DoesImpactHitWeakSpot(car.Location + fwd * x + right * y + up * z))
+                        continue;
+                    sum += new Vector3(x, y, z);
+                    hits++;
+                }
+            }
+        }
+
+        return hits > 0 ? sum / hits : null;
+    }
+
+    // Gun spread scatters rounds round the weak spot. One that lands close counts as on it.
+    private Vector3 HitPoint(RVehicleNPC vehicle, Vector3 at) =>
+        WeakSpot(vehicle) is { } weak && Vector3.Distance(at, weak) < WeakSlack ? weak : at;
+
     private void FindFoes()
     {
         _foes.Clear();
         _thugs.Clear();
+        _riders.Clear();
+        Manned.Clear();
         Vector3 at = _fm.Position;
+        float reach = LockRange * LockRange;
+
+        // Seated thugs are often hidden or not ticking, so they're found through the seats, not the other way.
+        var cars = new List<RVehicleNPC>();
+        var seated = new HashSet<nint>();
+        foreach (RVehicleNPC v in World.All<RVehicleNPC>())
+        {
+            if (!Car.Wreckable(v) || Vector3.DistanceSquared(v.Location, at) >= reach)
+                continue;
+            cars.Add(v);
+            InlineArray<RVehicleNPC.FVehiclePassenger> seats = v.Passengers;
+            for (int i = 0; i < seats.Count; i++)
+            {
+                if (seats[i].Pawn is RPawnVillain { IsValid: true } p && Alive(p) && seated.Add(p.Ptr))
+                {
+                    _riders.Add((p, v));
+                    Manned.Add(v.Ptr);
+                }
+            }
+        }
+
         float near = ThugRange * ThugRange;
         foreach (RPawnVillain thug in World.All<RPawnVillain>())
         {
-            if (CanStrike(thug) && Vector3.DistanceSquared(thug.Location, at) < near)
+            if (seated.Contains(thug.Ptr) || !CanStrike(thug) || Vector3.DistanceSquared(thug.Location, at) >= near)
+                continue;
+            if (Carried(thug) is { } ride && Car.Wreckable(ride))
+            {
+                _riders.Add((thug, ride));
+                Manned.Add(ride.Ptr);
+            }
+            else
+            {
                 _thugs.Add(thug);
+            }
         }
 
-        float reach = LockRange * LockRange;
-        foreach (RVehicleNPC v in World.All<RVehicleNPC>())
+        foreach (RVehicleNPC v in cars)
         {
-            if (Foe(v) && Vector3.DistanceSquared(v.Location, at) < reach)
+            if (Foe(v))
                 _foes.Add(v);
         }
 
@@ -286,9 +448,20 @@ internal sealed partial class Wing
         }
     }
 
+    private bool _free = true;
+    private Actor? _ordered;
+
+    // Manned vehicles and APCs only get hit on a strike order when it isn't free to pick its own targets.
+    private bool Held(Actor foe) => !_free && OrderOnly(foe) && (_ordered == null || foe.Ptr != _ordered.Ptr);
+
+    private static bool OrderOnly(Actor foe) => Apc(foe) || (foe is RVehicleNPC v && Manned.Contains(v.Ptr));
+
+    // Vehicles with a thug aboard, from the last foe scan. Those are fair game whatever the game calls them.
+    private static readonly HashSet<nint> Manned = new();
+
     private static bool Foe(Actor? a) => a switch
     {
-        RVehicleNPC v => Car.Hostile(v),
+        RVehicleNPC v => Car.Hostile(v) || (Manned.Contains(v.Ptr) && Car.Wreckable(v)),
         RHelicopterBase h => h is { IsValid: true, bDeleteMe: false, bHidden: false, IsFriendly: false, bFriendly: false },
         _ => false,
     };
@@ -422,17 +595,22 @@ internal sealed partial class Wing
 
     private float Jitter() => (float)(_spread.NextDouble() * 2.0 - 1.0);
 
-    private static void Strike(Actor hit, Vector3 at, Vector3 dir, int damage, RPawnPlayer pawn, RBatmobileCannon vulcan)
+    private void Strike(Actor hit, Vector3 at, Vector3 dir, int damage, RPawnPlayer pawn, RBatmobileCannon vulcan)
     {
         PlayerController? pc = World.Pc;
         Class damageType = RDmgType_BatmobileChainGun.StaticClass();
+
+        // A round that finds a thug riding a vehicle goes into the vehicle.
+        if (hit is RPawnVillain rider && Ride(rider) is { } ride)
+            hit = ride;
+
         switch (hit)
         {
             case RTankMissile missile when !missile.bDeleteMe && !missile.WasShotOutOfSky:
                 missile.TakeDamageFromWeapon(1000, pc!, at, Vector3.UnitZ, Vector3.Zero, damageType, default, pawn, false);
                 break;
-            case RVehicleNPC vehicle when Car.Hostile(vehicle):
-                vehicle.TakeDamageFromWeapon(damage, pc!, at, dir * 800f, Vector3.Zero, damageType, default, pawn, false);
+            case RVehicleNPC vehicle when Foe(vehicle):
+                vehicle.TakeDamageFromWeapon(damage, pc!, HitPoint(vehicle, at), dir * 800f, Vector3.Zero, damageType, default, pawn, false);
                 break;
             case RPawnVillain thug when CanStrike(thug):
                 Knock(thug, dir, pawn, vulcan);
@@ -467,8 +645,11 @@ internal sealed partial class Wing
         return bones.Count > 0 ? bones[Random.Shared.Next(bones.Count)] : Spine;
     }
 
-    private static bool CanStrike(RPawnVillain thug) =>
-        thug is { IsValid: true, bDeleteMe: false, bGoodAsDead: false, bHidden: false } && thug.Health > 0 && thug.CombatPawnType switch
+    private static bool CanStrike(RPawnVillain thug) => !thug.bHidden && Alive(thug);
+
+    // A hostile thug still up, seen or not.
+    private static bool Alive(RPawnVillain thug) =>
+        thug is { IsValid: true, bDeleteMe: false, bGoodAsDead: false } && thug.Health > 0 && thug.CombatPawnType switch
         {
             RPawnCombat.ECombatPawnType.ECPT_MultiStage or RPawnCombat.ECombatPawnType.ECPT_Robot or RPawnCombat.ECombatPawnType.ECPT_RiddlerMechSuit
                 or RPawnCombat.ECombatPawnType.ECPT_Player or RPawnCombat.ECombatPawnType.ECPT_Friendly => false,
@@ -490,14 +671,16 @@ internal sealed partial class Wing
         Vector3 muzzle = WorldPoint(_fm.Position, _tail + new Vector3(CannonAhead, 0f, CannonBelow));
         Vector3 target = _aimPoint;
         bool homing = homingWanted && _aimFoe is { IsValid: true } and not RPawnVillain;
+        Vector3? weak = homing ? WeakSpot(_aimFoe!) : null;
         if (homing && shell.Speed > 0f)
-            target = _aimFoe!.Location + _aimFoe.Velocity * (Vector3.Distance(muzzle, _aimFoe.Location) / shell.Speed);
+            target = (weak ?? _aimFoe!.Location) + _aimFoe!.Velocity * (Vector3.Distance(muzzle, _aimFoe.Location) / shell.Speed);
         Vector3 dir = Vector3.Normalize(target - muzzle);
 
         if (heavy.Spawn(shell.Class, heavy, FName.None, muzzle, Rotator.FromDirection(dir), shell, true) is not RProjectile p)
             return;
 
-        if (homing && p is RBasicProjectile basic)
+        // Homing pulls a shell to the middle of the hull, which misses an APC's weak spot. Those go straight.
+        if (homing && weak == null && p is RBasicProjectile basic)
         {
             basic.SetTarget(_aimFoe!);
             basic.bLockedOn = true;
@@ -633,7 +816,7 @@ internal sealed partial class Wing
         float bestDot = LockCone;
         foreach (Actor foe in _foes)
         {
-            if (!Foe(foe) || (!again && _locks.Exists(l => l.Ptr == foe.Ptr)))
+            if (!Foe(foe) || Held(foe) || (!again && _locks.Exists(l => l.Ptr == foe.Ptr)))
                 continue;
             Vector3 to = foe.Location - from;
             float dist = to.Length();

@@ -131,9 +131,16 @@ internal sealed partial class Wing
 
     private Vector2 Steer(Vector2 turn, float dt)
     {
-        // The pad's camera binds are parked while flying, so any real turn here is the mouse.
+        // The pad's camera binds are parked while flying, so a real turn here is the mouse. Unless the right
+        // stick is pushed, then it's the stick getting through before the binds are parked again. Counting that
+        // as the mouse switched the pad off mid turn.
         if (turn.LengthSquared() > 0.0025f)
-            Pad.KeyboardUsed();
+        {
+            if (Pad.RightStick != Vector2.Zero)
+                turn = Vector2.Zero;
+            else
+                Pad.KeyboardUsed();
+        }
 
         bool pad = Pad.InUse && Listening;
         Vector2 rs = pad ? PadStick() : Vector2.Zero;

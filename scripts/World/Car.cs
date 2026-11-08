@@ -49,8 +49,12 @@ internal static class Car
         Current() is { IsValid: true } car && car.PlayerVehicleInfo is { IsValid: true } info ? info : null;
 
     public static bool Hostile(RVehicleNPC v) =>
-        v is { IsValid: true, bDeleteMe: false, bHidden: false, DroneHacked: false, CivilianVehicle: false } && v.Health > 0 &&
-        v is not RVehicleStaticTank && v is not RVehicleHeavyTank && v.CurrentBehaviour is { IsValid: true };
+        Wreckable(v) && !v.CivilianVehicle && v.CurrentBehaviour is { IsValid: true };
+
+    // Can be shot up at all, whoever owns it. A thug driving an ordinary car fails Hostile.
+    public static bool Wreckable(RVehicleNPC v) =>
+        v is { IsValid: true, bDeleteMe: false, bHidden: false, DroneHacked: false } && v.Health > 0 &&
+        v is not RVehicleStaticTank && v is not RVehicleHeavyTank;
 
     public static int BarrageSize(RBatmobileMissileLauncher launcher)
     {

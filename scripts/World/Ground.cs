@@ -32,20 +32,68 @@ internal static class Ground
 
     public static bool InCity(Vector3 at) => Districts.At(at) != null;
 
-    public static void Enter(string? level)
+    // False when streaming is busy and the caller should try again shortly.
+    public static bool Enter(string? level)
     {
         if (World.Ri is not { } ri || level == null || !level.StartsWith("City", StringComparison.OrdinalIgnoreCase)
             || Districts.Volume(level) is not { } volume)
-            return;
+            return true;
 
         RLevelVolume? old = ri.CurrentLevelVolume is { IsValid: true } v ? v : null;
         if (old?.Ptr == volume.Ptr)
-            return;
+            return true;
+
+        // Entering a volume while it or a neighbour it links to is being streamed out is a hard crash
+        // inside EnteredLevelVolume, which no try/catch can stop.
+        if (Busy(ri, volume) is { } why)
+        {
+            Log.Throttled("district wait", "Districts: holding off entering " + level + ", " + why + ".");
+            return false;
+        }
 
         ri.RemovePredictedLevel();
         volume.EnteredLevelVolume();
-        if (old != null)
+        if (old != null && Busy(ri, old) == null)
             old.LevelVolumeDeactivated();
+        return true;
+    }
+
+    private static string? Busy(RGameRI ri, RLevelVolume volume)
+    {
+        if (ri.LevelStreamingLocked)
+            return "streaming is locked by " + (ri.LevelStreamingLockedBy.ToString() is { Length: > 0 } by ? by : "the game");
+        if (ri.LevelStreamingInitialising)
+            return "streaming is starting up";
+        if (Gone(ri, volume) || ri.GetLevelForObject(volume) is { IsValid: true, bIsVisible: false })
+            return "its volume is going away";
+
+        foreach (TArray<RLevelTransition> links in new[]
+        {
+            volume.OtherLevelsTransitionActors, volume.OtherLevelsTransitionActors2,
+            volume.OtherLevelLODsTransitionActors, volume.OtherLevelLODsTransitionActors2,
+        })
+        {
+            for (int i = 0; i < links.Count; i++)
+            {
+                if (Gone(ri, links[i]))
+                    return "a linked level is going away";
+            }
+        }
+
+        return null;
+    }
+
+    private static bool Gone(RGameRI ri, Actor? a)
+    {
+        if (a == null)
+            return false;
+        if (!a.IsValid || a.bDeleteMe || a.bPendingDelete)
+            return true;
+
+        // A level that's hidden and staying hidden is fine, LOD levels sit like that. One on its way out isn't.
+        LevelStreaming? ls = ri.GetLevelForObject(a);
+        return ls is { IsValid: true } && (ls.bHasUnloadRequestPending || ls.bIsRequestingUnloadAndRemoval || !ls.bShouldBeLoaded
+            || ls.bIsVisible != ls.bShouldBeVisible || ls.LoadedLevel is not { IsValid: true });
     }
 
     public static bool Real(Pawn mover, Vector3 above, float reach, out Vector3 floor)

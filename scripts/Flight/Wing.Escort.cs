@@ -32,6 +32,13 @@ internal sealed partial class Wing
     private const float StrikeCone = 0.985f;
     private const float StrikeReach = 12000f;
     private const double StrikeSeconds = 12.0;
+    private const double ApcPatience = 30.0;
+    private const int MarksMost = 6;
+    private const float ChaseReach = 25000f;
+    private const float ChaseLeash = 30000f;
+    private const float ChaseLead = 0.8f;
+    private const float ChaseMoving = 800f;
+    private const float HullSlack = 600f;
     private const double CannonEvery = 2.5;
     private const double CannonEveryFlying = 1.5;
     private const double BarrageEvery = 8.0;
@@ -100,6 +107,9 @@ internal sealed partial class Wing
         WeaponsOff();
         _escortFoe = null;
         _strike = _strikeAim = null;
+        _queue.Clear();
+        _marks.Clear();
+        _marking = false;
     }
 
     private Vector3 PickupSpot(Vector3 centre) =>
@@ -136,8 +146,11 @@ internal sealed partial class Wing
 
     private Actor? _escortFoe;
     private int _foesNear;
-    private RPawnVillain? _strike;
-    private RPawnVillain? _strikeAim;
+    private Actor? _strike;
+    private Actor? _strikeAim;
+    private readonly List<Actor> _marks = new();
+    private readonly List<Actor> _queue = new();
+    private bool _marking;
     private double _strikeUntil;
     private double _nextCannon, _nextBarrage, _lockUntil;
     private Every _escortPick, _escortAhead, _strikeLook;
@@ -222,6 +235,9 @@ internal sealed partial class Wing
         _stationAngle = MathF.Atan2(_fm.Position.Y - batman.Y, _fm.Position.X - batman.X);
         _escortFoe = null;
         _strike = _strikeAim = null;
+        _queue.Clear();
+        _marks.Clear();
+        _marking = false;
         _foesNear = 0;
         _nextCannon = _nextBarrage = _lockUntil = 0.0;
         _escortPick.Force();
@@ -250,52 +266,188 @@ internal sealed partial class Wing
         Toast(why);
     }
 
-    // Strike key. Hits the thug nearest the middle of the screen, never one picked on its own.
+    // Strike key. Hits whatever is nearest the middle of the screen, never a thug picked on its own. A thug in a
+    // vehicle means the vehicle. A vehicle gets chased until it's destroyed.
+    // Holding it marks everything the crosshair passes over, and the strikes go in the order they were marked.
     public void Strike()
     {
-        if (!Escorting)
+        if (!Escorting || _marking)
             return;
 
-        if (_strikeAim is not { IsValid: true } thug || !CanStrike(thug))
+        _marking = true;
+        _marks.Clear();
+        Mark();
+    }
+
+    private void Mark()
+    {
+        if (_strikeAim is not { IsValid: true } aim || !Strikeable(aim) || _marks.Count >= MarksMost || _marks.Exists(m => m.Ptr == aim.Ptr))
+            return;
+
+        _marks.Add(aim);
+        Sound(Car.Weapon<RBatmobileMissileLauncher>()?.LockOnSound);
+    }
+
+    // Runs every escort frame. Keeps marking while the key is down, and hands the marks over when it comes up.
+    private void Marking()
+    {
+        if (!_marking)
+            return;
+
+        if (Keyboard.IsDown(Opt.StrikeKey.Key))
         {
-            Toast("NO TARGET");
+            Mark();
             return;
         }
 
-        _strike = thug;
-        _strikeUntil = Clock.Now + StrikeSeconds;
-        Toast("STRIKE");
+        _marking = false;
+        _marks.RemoveAll(m => !m.IsValid || !Strikeable(m));
+        if (_marks.Count == 0)
+        {
+            Toast("NO TARGET");
+            Safe.Run("batwing strike miss", NoTargetLog);
+            return;
+        }
+
+        _queue.Clear();
+        _queue.AddRange(_marks.Skip(1));
+        Actor first = _marks[0];
+        int count = _marks.Count;
+        _marks.Clear();
+        Toast(count > 1 ? "STRIKE // " + count + " TARGETS" : first is RPawnVillain ? "STRIKE" : Apc(first) ? "STRIKE ON APC" : "STRIKE ON VEHICLE");
+        if (count > 1)
+            Log.Info(Title + ": strike ordered on " + count + " targets.");
+        BeginStrike(first);
     }
 
-    private RPawnVillain? StrikeCandidate(Vector3 batman)
+    private void BeginStrike(Actor aim)
     {
-        if (Hooks.PlayerCam() is not { } cam)
+        _strike = aim;
+        _strikeUntil = Clock.Now + StrikeSeconds;
+        _targetSeen = false;
+        Log.Info(Title + ": strike on " + aim.Name + (Apc(aim) ? " (APC)" : "") + " at " + Geo.Position(aim.Location) + ".");
+    }
+
+    // One strike is over. Moves on to the next marked target that's still worth hitting.
+    private void EndStrike(string why)
+    {
+        _strike = null;
+        while (_queue.Count > 0)
+        {
+            Actor next = _queue[0];
+            _queue.RemoveAt(0);
+            if (!next.IsValid || !Strikeable(next))
+                continue;
+
+            Toast(why + " // NEXT TARGET");
+            BeginStrike(next);
+            return;
+        }
+
+        Toast(why);
+    }
+
+    private Actor? StrikeCandidate(Vector3 batman)
+    {
+        if (Hooks.PlayerCam() is not { } cam || World.Player is not { } me)
             return null;
 
         Vector3 eye = cam.CameraCache.POV.Location;
         Vector3 look = Geo.Dir(cam.CameraCache.POV.Rotation.Yaw, cam.CameraCache.POV.Rotation.Pitch);
-        RPawnVillain? best = null;
+        Actor? best = null;
         float bestDot = StrikeCone;
         foreach (RPawnVillain thug in World.All<RPawnVillain>())
         {
-            if (!CanStrike(thug) || Vector3.DistanceSquared(thug.Location, batman) > StrikeReach * StrikeReach)
-                continue;
-            Vector3 to = thug.Location - eye;
-            float dist = to.Length();
-            if (dist < 1f)
-                continue;
-            float dot = Vector3.Dot(to / dist, look);
             // Only thugs you can actually see. The game parks some out of sight, under the streets or in
             // interiors, with their tick off.
-            if (dot > bestDot && !thug.bTickIsDisabled && World.Player is { } me && !Ground.Ray(me, eye, thug.Location, out _, out _))
+            if (!CanStrike(thug) || thug.bTickIsDisabled || Vector3.DistanceSquared(thug.Location, batman) > StrikeReach * StrikeReach
+                || !Ahead(eye, look, thug.Location, bestDot, out float dot))
+                continue;
+
+            if (Ride(thug) is { } ride)
+            {
+                if (Foe(ride) && InView(me, eye, thug.Location, HullSlack))
+                {
+                    bestDot = dot;
+                    best = ride;
+                }
+            }
+            else if (InView(me, eye, thug.Location, 0f))
             {
                 bestDot = dot;
                 best = thug;
             }
         }
 
+        foreach (Actor foe in _foes)
+        {
+            if (Foe(foe) && Vector3.DistanceSquared(foe.Location, batman) < ChaseReach * ChaseReach
+                && Ahead(eye, look, foe.Location, bestDot, out float dot) && InView(me, eye, foe.Location, HullSlack))
+            {
+                bestDot = dot;
+                best = foe;
+            }
+        }
+
         return best;
     }
+
+    // Says what the vehicle nearest the middle of the screen looks like to the strike, so a miss can be traced.
+    private void NoTargetLog()
+    {
+        if (Hooks.PlayerCam() is not { } cam)
+            return;
+
+        Vector3 eye = cam.CameraCache.POV.Location;
+        Vector3 look = Geo.Dir(cam.CameraCache.POV.Rotation.Yaw, cam.CameraCache.POV.Rotation.Pitch);
+        RVehicleNPC? best = null;
+        float bestDot = 0.9f;
+        foreach (RVehicleNPC v in World.All<RVehicleNPC>())
+        {
+            if (v is { IsValid: true, bDeleteMe: false } && Ahead(eye, look, v.Location, bestDot, out float dot))
+            {
+                bestDot = dot;
+                best = v;
+            }
+        }
+
+        if (best == null)
+        {
+            Log.Info(Title + ": strike found no target and no vehicle near the middle of the screen.");
+            return;
+        }
+
+        var aboard = new List<string>();
+        InlineArray<RVehicleNPC.FVehiclePassenger> seats = best.Passengers;
+        for (int i = 0; i < seats.Count; i++)
+        {
+            if (seats[i].Pawn is { IsValid: true } p)
+                aboard.Add(p.Name + (p is RPawnVillain t ? (Alive(t) ? "" : " (down)") : " (not a thug)"));
+        }
+
+        Log.Info(Title + ": strike found no target. Nearest vehicle " + best.Name + " (" + best.Class.Name + "), "
+            + Fmt.Whole(Vector3.Distance(eye, best.Location) / Metre) + " m, " + Fmt.Whole(MathF.Acos(Math.Clamp(bestDot, -1f, 1f)) * Deg) + " deg off centre, "
+            + "health " + best.Health + ", civilian " + best.CivilianVehicle + ", hidden " + best.bHidden + ", hacked " + best.DroneHacked
+            + ", behaviour " + (best.CurrentBehaviour is { IsValid: true } b ? b.Class.Name : "none") + ", foe " + Foe(best)
+            + ", aboard " + (aboard.Count > 0 ? string.Join(", ", aboard) : "nobody") + ".");
+    }
+
+    private static bool Ahead(Vector3 eye, Vector3 look, Vector3 at, float least, out float dot)
+    {
+        Vector3 to = at - eye;
+        float dist = to.Length();
+        dot = dist < 1f ? -1f : Vector3.Dot(to / dist, look);
+        return dot > least;
+    }
+
+    // A ray at a vehicle stops on its own hull, so anything that close counts as seeing it.
+    private static bool InView(Actor me, Vector3 eye, Vector3 at, float slack) =>
+        !Ground.Ray(me, eye, at, out Vector3 hit, out _) || (slack > 0f && Vector3.Distance(eye, hit) > Vector3.Distance(eye, at) - slack);
+
+    private bool Chasing(Actor? target) => target != null && _strike != null && target.Ptr == _strike.Ptr && target is not RPawnVillain;
+
+    // Where to watch a target from. A chased vehicle is led a little so the Batwing keeps up.
+    private Vector3 Watched(Actor target) => Chasing(target) ? target.Location + target.Velocity * ChaseLead : target.Location;
 
     private void EscortStep(PlayerController pc, float dt)
     {
@@ -329,7 +481,8 @@ internal sealed partial class Wing
             Safe.Run("batwing escort targets", () => PickFoe(craft, centre));
         if (_strikeLook.Elapsed(0.1))
             _strikeAim = lead is RPawnPlayer ? StrikeCandidate(centre) : null;
-        StrikeCheck();
+        Marking();
+        StrikeCheck(centre);
 
         FlightInput input = Autopilot(craft, centre, dt);
         _fm.TopSpeed = Opt.TopSpeed.Number * Metre;
@@ -351,24 +504,45 @@ internal sealed partial class Wing
         Safe.Run("batwing escort weapons", () => WeaponsStep(batman, orders, dt));
     }
 
-    private void StrikeCheck()
+    private void StrikeCheck(Vector3 centre)
     {
         if (_strike == null)
             return;
 
-        if (!_strike.IsValid || !CanStrike(_strike))
+        // A thug who got into a vehicle takes the vehicle down with him.
+        if (_strike is RPawnVillain { IsValid: true } thug && Alive(thug) && Ride(thug) is { } ride && Foe(ride))
         {
-            _strike = null;
-            Toast("TARGET DOWN");
+            Log.Info(Title + ": strike target " + thug.Name + " got into " + ride.Name + ", going after the vehicle.");
+            _strike = ride;
+        }
+
+        if (!_strike.IsValid || !Strikeable(_strike))
+        {
+            bool down = !_strike.IsValid || _strike.bDeleteMe || _strike is Pawn { Health: <= 0 } || _strike is RPawnVillain;
+            Log.Info(Title + ": strike target " + (down ? "down." : "lost."));
+            EndStrike(down ? "TARGET DOWN" : "TARGET LOST");
             return;
+        }
+
+        if (_strike is not RPawnVillain)
+        {
+            if (FlatDistance(_strike.Location, centre) > ChaseLeash)
+            {
+                Log.Info(Title + ": strike target " + _strike.Name + " got away at " + Geo.Position(_strike.Location) + ".");
+                EndStrike("TARGET GOT AWAY");
+                return;
+            }
+
+            // A vehicle is chased as long as it stays in sight. An APC gets longer to come back into view.
+            if (_targetSeen)
+                _strikeUntil = Math.Max(_strikeUntil, Clock.Now + (Apc(_strike) ? ApcPatience : StrikeSeconds));
         }
 
         if (Clock.Now > _strikeUntil)
         {
             Log.Info(Title + ": strike on " + _strike.Name + " at " + Geo.Position(_strike.Location) + " ran out. Batwing at " + Geo.Position(_fm.Position)
                 + ", road spot " + (_roadSpot is { } r ? Geo.Position(r) : "none") + ", target " + (_targetSeen ? "in sight" : "not in sight") + ".");
-            _strike = null;
-            Toast("NO CLEAR SHOT");
+            EndStrike("NO CLEAR SHOT");
         }
     }
 
@@ -378,9 +552,10 @@ internal sealed partial class Wing
         Actor? best = null;
         float bestDist = EngageRange * EngageRange;
         int near = 0;
+        // Cars with thugs in them and APCs wait for a strike order.
         foreach (Actor foe in _foes)
         {
-            if (!Foe(foe))
+            if (!Foe(foe) || OrderOnly(foe))
                 continue;
             float d = Vector3.DistanceSquared(foe.Location, centre);
             if (d > EngageRange * EngageRange)
@@ -401,7 +576,7 @@ internal sealed partial class Wing
 
     private Actor? EscortTarget()
     {
-        if (_strike is { IsValid: true } s && CanStrike(s))
+        if (_strike is { IsValid: true } s && Strikeable(s))
             return s;
         return _escortFoe is { IsValid: true } f && Foe(f) ? f : null;
     }
@@ -426,8 +601,9 @@ internal sealed partial class Wing
         {
             if (target != null)
             {
+                // A road spot is fixed, so it's no use for something driving away.
                 Vector3? found = null;
-                if (target is not RHelicopterBase)
+                if (target is not RHelicopterBase && !Chasing(target))
                     Safe.Run("batwing road spot", () => found = RoadSpot(craft, centre, target));
                 _roadSpot = found;
                 if (found == null)
@@ -485,7 +661,7 @@ internal sealed partial class Wing
         if (target == null)
             return new Vector3(centre.X + dir.X * StationRadius, centre.Y + dir.Y * StationRadius, centre.Z + StationHeight + _climb);
 
-        Vector3 t = target.Location;
+        Vector3 t = Watched(target);
         var spot = new Vector3(t.X + dir.X * Standoff, t.Y + dir.Y * Standoff, t.Z + StandoffHeight + _climb);
         var pull = new Vector3(spot.X - centre.X, spot.Y - centre.Y, 0f);
         float reach = pull.Length();
@@ -557,7 +733,10 @@ internal sealed partial class Wing
         Vector3 at = _fm.Position;
         Actor? target = _pickup ? null : EscortTarget();
 
-        Vector3 station = _pickup ? PickupSpot(centre) : Station(craft, centre, target, dt);
+        // A chased vehicle pulls the Batwing away from Batman, so the spot is kept near the vehicle instead.
+        // The strike check ends the chase if it gets too far from him.
+        bool chase = Chasing(target);
+        Vector3 station = _pickup ? PickupSpot(centre) : Station(craft, chase ? target!.Location : centre, target, dt);
         float gap = Vector3.Distance(station, at);
 
         // Going down to a lower spot, get over it first and then drop straight in. The air above a road is
@@ -579,12 +758,13 @@ internal sealed partial class Wing
         }
 
         _climb = _escortBlocked ? MathF.Min(_climb + 1500f * dt * 4f, ClimbMost) : MathF.Max(0f, _climb - 800f * dt);
-        Unstick(centre, station, gap, dt);
+        Unstick(centre, gap, dt, chase && target!.Velocity.Length() > ChaseMoving);
 
-        // Wings only to catch up with Batman. Never with a target or a pickup, since a jet can't stop over a
-        // spot and ends up diving at it. Measured flat so a long drop into a street doesn't count as far.
+        // Wings only to catch up, with Batman or a vehicle it's chasing. Never for a target it's fighting or a
+        // pickup, since a jet can't stop over a spot and ends up diving at it. Measured flat so a long drop
+        // into a street doesn't count as far.
         float across = FlatDistance(station, at);
-        bool hover = target != null || _pickup || (_fm.HoverWanted ? across < WingsFrom : across < HoverWithin);
+        bool hover = (target != null && !chase) || _pickup || (_fm.HoverWanted ? across < WingsFrom : across < HoverWithin);
         if (hover != _fm.HoverWanted)
         {
             _fm.HoverWanted = hover;
@@ -641,10 +821,11 @@ internal sealed partial class Wing
 
     // It can wedge itself under something or lose Batman entirely. If it stops closing on its spot for a
     // while, put it back above him.
-    private void Unstick(Vector3 centre, Vector3 station, float gap, float dt)
+    private void Unstick(Vector3 centre, float gap, float dt, bool trailing)
     {
         bool lost = Vector3.DistanceSquared(_fm.Position, centre) > LostFrom * LostFrom;
-        bool stuck = gap > 3000f && gap > _lastGap - 30f * dt;
+        // Falling behind something driving away isn't being stuck.
+        bool stuck = !trailing && gap > 3000f && gap > _lastGap - 30f * dt;
         _lastGap = gap;
         _stuckFor = lost || stuck ? _stuckFor + dt : MathF.Max(0f, _stuckFor - dt);
         if (_stuckFor < StuckSeconds)
@@ -687,7 +868,7 @@ internal sealed partial class Wing
 
     private Orders EscortOrders()
     {
-        var orders = new Orders { Look = _fm.Forward, Thugs = false, Homing = true };
+        var orders = new Orders { Look = _fm.Forward, Free = false, Homing = true };
         if (EscortTarget() is not { } target)
             return orders;
 
@@ -709,21 +890,25 @@ internal sealed partial class Wing
             return orders;
 
         // Guns don't bring down anything flying, so those get the cannon more often and missiles even alone.
+        // So does a vehicle Batman ordered a strike on, with the whole barrage on it.
         bool flying = target is RVehicleFlying or RHelicopterBase;
+        bool ordered = Chasing(target);
+        bool heavy = flying || ordered;
         double now = Clock.Now;
         if (front > 0.9f && now >= _nextCannon && Car.Weapon<RBatmobileHeavyCannon>()?.ProjectileArchetype is { IsValid: true })
         {
             orders.Cannon = true;
-            _nextCannon = now + (flying ? CannonEveryFlying : CannonEvery);
+            _nextCannon = now + (heavy ? CannonEveryFlying : CannonEvery);
         }
 
-        if ((flying || _foesNear >= 2) && front > 0.8f && now >= _nextBarrage && Car.Weapon<RBatmobileMissileLauncher>()?.MissileClass is { IsValid: true })
+        if ((heavy || _foesNear >= 2) && front > 0.8f && now >= _nextBarrage && Car.Weapon<RBatmobileMissileLauncher>()?.MissileClass is { IsValid: true })
         {
             _lockUntil = now + LockHold;
-            _nextBarrage = now + (flying ? BarrageEveryFlying : BarrageEvery);
+            _nextBarrage = now + (heavy ? BarrageEveryFlying : BarrageEvery);
         }
 
         orders.Lock = now < _lockUntil;
+        orders.Stack = orders.Lock && ordered;
         return orders;
     }
 }

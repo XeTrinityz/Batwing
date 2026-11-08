@@ -85,7 +85,7 @@ internal sealed partial class Wing
         Rect(x, y, w, h, Palette.Screen, 0.85f);
         Rect(x, y, U(3), h, Palette.Hud, 0.9f);
         Spaced(x + U(16), y + U(7), "BATWING ESCORT", Palette.Hud, Sc(0.56f), 2f);
-        string state = _pickup ? "PICKUP" : _strike != null ? "STRIKING" : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
+        string state = _pickup ? "PICKUP" : _strike != null ? (_strike is RPawnVillain ? "STRIKING" : "CHASING") : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
         TextRight(x + w - U(16), y + U(16), state, _strike != null ? Palette.CautionNow : Palette.Text, Sc(0.5f));
         TextMid(x + U(16), y + h - U(13), "STRIKE: " + Opt.StrikeKey.Value + "  BOARD: " + Opt.CallKey.Value + "  DISMISS: " + Opt.EscortKey.Value, Palette.Dim, Sc(0.4f));
 
@@ -95,14 +95,25 @@ internal sealed partial class Wing
 
         float t = Thick;
         if (_strike is { IsValid: true } strike)
-        {
             Brackets(strike.Location, U(14f), Palette.CautionNow, t);
-        }
-        else if (_strikeAim is { IsValid: true } aim)
+
+        // Marked while the key is held, then the ones still waiting their turn, numbered in strike order.
+        List<Actor> numbered = _marking ? _marks : _queue;
+        for (int i = 0; i < numbered.Count; i++)
         {
-            Brackets(aim.Location, U(10f), Palette.Dim, t);
+            if (numbered[i] is not { IsValid: true } m)
+                continue;
+            Brackets(m.Location, U(12f), Palette.Warn, t);
+            if (WorldView.ToScreen(m.Location, out Vector2 p))
+                TextMid(p.X + U(20f), p.Y, (i + (_marking ? 1 : 2)).ToString(), Palette.Warn, Sc(0.44f));
+        }
+
+        if ((_strike == null || _marking) && _strikeAim is { IsValid: true } aim && !_marks.Exists(m => m.Ptr == aim.Ptr))
+        {
+            Brackets(aim.Location, U(aim is RPawnVillain ? 10f : 16f), Palette.Dim, t);
+            string what = aim is RPawnVillain ? "" : Apc(aim) ? " APC" : " VEHICLE";
             if (WorldView.ToScreen(aim.Location, out Vector2 p))
-                TextMid(p.X + U(16f), p.Y, Opt.StrikeKey.Value, Palette.Dim, Sc(0.4f));
+                TextMid(p.X + U(aim is RPawnVillain ? 16f : 22f), p.Y, Opt.StrikeKey.Value + what, Palette.Dim, Sc(0.4f));
         }
 
         if (_escortFoe is { IsValid: true } foe && Foe(foe))
@@ -454,6 +465,13 @@ internal sealed partial class Wing
         else if (_aimFoe is { IsValid: true } aimed && !_locks.Exists(l => l.Ptr == aimed.Ptr))
         {
             Brackets(aimed.Location, U(14f), Palette.Text, t);
+        }
+
+        if (_aimFoe is { IsValid: true } apc && Apc(apc) && WeakSpot(apc) is { } weak)
+        {
+            Brackets(weak, U(8f), Palette.CautionNow, t);
+            if (WorldView.ToScreen(weak, out Vector2 p))
+                TextMid(p.X + U(14f), p.Y, "WEAK SPOT", Palette.CautionNow, Sc(0.4f));
         }
 
         Rgba lockCol = _lockFull ? Palette.Warn : Palette.Hud;

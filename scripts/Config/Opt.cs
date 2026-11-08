@@ -61,7 +61,7 @@ internal static class Opt
             () => Wing.I.RemoteToggle());
         RemoteCall.Live = () => Wing.I.RemoteLabel;
         EscortCall = Act(flight, "escort", "ESCORT",
-            "The Batwing circles overhead and takes on drones and helicopters near Batman by itself. Thugs only when you order a strike. Call it to get picked up. Same as the escort key.",
+            "The Batwing circles overhead and takes on drones and helicopters near Batman by itself. Thugs, cars with thugs in them and APCs only when you order a strike. Call it to get picked up. Same as the escort key.",
             () => Wing.I.EscortToggle());
         EscortCall.Live = () => Wing.I.EscortLabel;
         FlyIn = Add(flight, "fly_in", "FLY IN", true,
@@ -89,7 +89,7 @@ internal static class Opt
         EscortKey = Add(controls, "escort_key", "ESCORT KEY", Keys.I,
             "Key to bring in or dismiss the escort. Press ENTER, then the new key.");
         StrikeKey = Add(controls, "strike_key", "STRIKE KEY", Keys.T,
-            "On escort, look at a thug and press this to have the Batwing take them down. Press ENTER, then the new key.");
+            "On escort, look at a thug or vehicle and press this to have the Batwing take it down. Hold it and sweep across targets to mark up to 6, and it takes them in order. Press ENTER, then the new key.");
         DeckKey = Add(controls, "deck_key", "DECK KEY", Keys.F4,
             "Key to open and close the deck. Press ENTER, then the new key.");
         Controller = Add(controls, "controller", "CONTROLLER", true,

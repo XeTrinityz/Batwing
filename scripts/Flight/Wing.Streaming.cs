@@ -119,11 +119,14 @@ internal sealed partial class Wing
         if (cell == null || string.Equals(cell, _cell, StringComparison.OrdinalIgnoreCase))
             return;
 
+        // Only remember the cell once it's entered, so a held-off entry is tried again next frame.
+        if (!Safe.Try("batwing district", () => Ground.Enter(cell), true))
+            return;
+
         _cell = cell;
         Log.Detail(Title + ": over " + cell + (Districts.Scan(_fm.Position) is { } under && !under.Equals(cell, StringComparison.OrdinalIgnoreCase)
             ? " (leading, under us is " + under + ")."
             : Districts.Scan(target) == null ? " (nearest loaded, walking towards " + (Districts.Mapped(target) ?? "unknown") + ")." : "."));
-        Safe.Run("batwing district", () => Ground.Enter(cell));
     }
 
     private void KeepLoading()

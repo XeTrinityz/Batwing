@@ -76,7 +76,6 @@ internal static class Pad
     private static bool _missing;
     private static int _index = -1;
     private static double _nextScan;
-    private static uint _packet;
     private static ushort _now, _prev, _raw, _rawPrev;
     private static short _lx, _ly, _rx, _ry;
     private static byte _lt, _rt;
@@ -208,7 +207,6 @@ internal static class Pad
                 continue;
 
             _index = i;
-            _packet = state.PacketNumber;
             _now = _prev = _raw = _rawPrev = state.Gamepad.Buttons;
             Log.Info("Pad: controller " + i + " connected.");
             return;
@@ -236,10 +234,8 @@ internal static class Pad
             b |= Right;
         _now = b;
 
-        if (state.PacketNumber == _packet)
-            return;
-
-        _packet = state.PacketNumber;
+        // Anything held counts on every poll, not just when the state changes. A stick held still at full tilt
+        // sends no new packets, so after a mouse nudge the pad stayed switched off until the stick moved.
         if (g.Buttons != 0 || g.LeftTrigger > TriggerNoise || g.RightTrigger > TriggerNoise ||
             Math.Abs((int)g.ThumbLX) > StickNoise || Math.Abs((int)g.ThumbLY) > StickNoise ||
             Math.Abs((int)g.ThumbRX) > StickNoise || Math.Abs((int)g.ThumbRY) > StickNoise)
