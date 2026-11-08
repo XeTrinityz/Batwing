@@ -169,6 +169,7 @@ internal sealed partial class Wing
 
     private const float PadTurnRate = 110f, PadPitchRate = 75f, PadLookRate = 150f;
     private const float PadLeadYaw = 40f, PadLeadPitch = 32f;
+    private const float PadLeashSoft = 0.4f;
 
     private static bool Listening => !Shared.AnyMenuOpen && Native.GameInFront() && !World.Paused;
 
@@ -191,20 +192,33 @@ internal sealed partial class Wing
     // with the aim once you let go.
     private void PadAim(Vector2 move)
     {
-        _aimYaw = Geo.WrapDegrees(_aimYaw + move.X);
-        _aimPitch = Math.Clamp(_aimPitch + move.Y, -AimPitchLimit, AimPitchLimit);
-
         Vector3 path = _fm.Velocity.Length() > 500f ? Vector3.Normalize(_fm.Velocity) : _fm.Forward;
         if (path.X * path.X + path.Y * path.Y < 0.01f)
+        {
+            _aimYaw = Geo.WrapDegrees(_aimYaw + move.X);
+            _aimPitch = Math.Clamp(_aimPitch + move.Y, -AimPitchLimit, AimPitchLimit);
             return;
+        }
 
         float pathYaw = MathF.Atan2(path.Y, path.X) * Deg;
         float pathPitch = MathF.Asin(Math.Clamp(path.Z, -1f, 1f)) * Deg;
         float reach = Math.Clamp(Opt.AimSpeed.Number, 0.5f, 2f);
-        float yawLead = PadLeadYaw * reach, pitchLead = PadLeadPitch * reach;
+        float yawMove = Leash(move.X, Geo.WrapDegrees(_aimYaw - pathYaw), PadLeadYaw * reach);
+        float pitchMove = Leash(move.Y, _aimPitch - pathPitch, PadLeadPitch * reach);
+        _aimYaw = Geo.WrapDegrees(_aimYaw + yawMove);
+        _aimPitch = Math.Clamp(_aimPitch + pitchMove, -AimPitchLimit, AimPitchLimit);
+    }
 
-        _aimYaw = Geo.WrapDegrees(pathYaw + Math.Clamp(Geo.WrapDegrees(_aimYaw - pathYaw), -yawLead, yawLead));
-        _aimPitch = Math.Clamp(Math.Clamp(_aimPitch, pathPitch - pitchLead, pathPitch + pitchLead), -AimPitchLimit, AimPitchLimit);
+    // Pushing the aim further ahead of the flight path gets heavier over the end of the leash instead of stopping
+    // dead, which felt like hitting a wall before the jet had turned. Coming back is never slowed, and an aim
+    // already past the end (looking down when leaving hover) stays put instead of snapping in.
+    private static float Leash(float move, float ahead, float lead)
+    {
+        if (move * ahead <= 0f)
+            return move;
+
+        float room = Math.Clamp((lead - MathF.Abs(ahead)) / (lead * PadLeashSoft), 0f, 1f);
+        return move * room;
     }
 
     private Vector3 AimDir() => Geo.Dir(_aimYaw, _aimPitch);
