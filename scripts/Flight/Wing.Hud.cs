@@ -18,6 +18,11 @@ internal sealed partial class Wing
 
     private static float Thick => MathF.Max(1f, U(1.6f));
 
+    // The inbound and escort cards sit where toasts go, so they hold that spot and toasts drop under them.
+    private const string CardLane = Shared.OwnerName + ".Card";
+
+    private static void HoldToastSpot(float bottom) => ToastLane.Post(CardLane, 0, bottom);
+
     public void Draw(Canvas c)
     {
         if (_phase == Phase.Arriving)
@@ -58,6 +63,7 @@ internal sealed partial class Wing
         float y = S(118);
         float w = U(300), h = U(44);
         float x = cx - w * 0.5f;
+        HoldToastSpot(y + h);
         Rect(x, y, w, h, Palette.Screen, 0.85f);
         Rect(x, y, U(3), h, Palette.CautionNow, 0.9f);
         Rect(x, y + h - MathF.Max(1f, U(2)), w * EtaFraction, MathF.Max(1f, U(2)), Palette.CautionNow, 0.95f);
@@ -75,6 +81,7 @@ internal sealed partial class Wing
         float y = S(118);
         float w = U(300), h = U(44);
         float x = cx - w * 0.5f;
+        HoldToastSpot(y + h);
         Rect(x, y, w, h, Palette.Screen, 0.85f);
         Rect(x, y, U(3), h, Palette.Hud, 0.9f);
         Spaced(x + U(16), y + U(7), "BATWING ESCORT", Palette.Hud, Sc(0.56f), 2f);
@@ -449,10 +456,23 @@ internal sealed partial class Wing
             Brackets(aimed.Location, U(14f), Palette.Text, t);
         }
 
-        foreach (Actor foe in _locks)
+        Rgba lockCol = _lockFull ? Palette.Warn : Palette.Hud;
+        for (int i = 0; i < _locks.Count; i++)
         {
-            if (foe.IsValid)
-                Brackets(foe.Location, U(20f), _lockFull ? Palette.Warn : Palette.Hud, t);
+            Actor foe = _locks[i];
+            if (!foe.IsValid || _locks.FindIndex(l => l.Ptr == foe.Ptr) != i)
+                continue;
+
+            Brackets(foe.Location, U(20f), lockCol, t);
+            int stacked = 0;
+            foreach (Actor l in _locks)
+            {
+                if (l.Ptr == foe.Ptr)
+                    stacked++;
+            }
+
+            if (stacked > 1 && WorldView.ToScreen(foe.Location, out Vector2 p))
+                TextMid(p.X + U(32f), p.Y, "x" + stacked, lockCol, Sc(0.44f));
         }
 
         if ((_locking || _salvo.Count > 0) && WorldView.ToScreen(_fm.Position + _look * 30000f, out Vector2 aim))
@@ -498,6 +518,7 @@ internal sealed partial class Wing
                 keys.Add(("X", "GUNS"));
                 keys.Add(("RB", "CANNON"));
                 keys.Add(("A", "HOLD: LOCK // LET GO: MISSILES"));
+                keys.Add(("A + X", "EXTRA MISSILE ON TARGET"));
             }
 
             keys.Add(("LB", "LOOK AROUND"));
@@ -527,6 +548,7 @@ internal sealed partial class Wing
                 keys.Add(("LEFT MOUSE", "GUNS"));
                 keys.Add(("Q", "CANNON"));
                 keys.Add(("RIGHT MOUSE", "HOLD: LOCK // LET GO: MISSILES"));
+                keys.Add(("RIGHT + LEFT MOUSE", "EXTRA MISSILE ON TARGET"));
             }
 
             keys.Add(("MIDDLE MOUSE", "LOOK AROUND"));

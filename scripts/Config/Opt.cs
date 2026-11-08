@@ -101,7 +101,7 @@ internal static class Opt
 
         Page weapons = Add("weapons", "WEAPONS", "Batmobile weapons on the Batwing.");
         Weapons = Add(weapons, "weapons", "WEAPONS", true,
-            "Uses your Batmobile's weapons and upgrades. Hold LMB (X) for the Vulcan gun, Q (RB) for the cannon, hold RMB (A) to lock onto drones and tanks and release to fire missiles. Aim at a thug and the guns fire riot rounds that knock them out. Batmobile has to be in the city.");
+            "Uses your Batmobile's weapons and upgrades. Hold LMB (X) for the Vulcan gun, Q (RB) for the cannon, hold RMB (A) to lock onto drones and tanks and release to fire missiles. Click LMB (X) while locking to put another missile on the target you aim at. Aim at a thug and the guns fire riot rounds that knock them out. Batmobile has to be in the city.");
         GunAssist = Add(weapons, "gun_assist", "GUN AIM ASSIST", true,
             "Vulcan gun snaps onto drones and tanks close to your aim. Turn off and shots go exactly where you aim.");
         CannonHoming = Add(weapons, "cannon_homing", "CANNON HOMING", true,
@@ -112,7 +112,7 @@ internal static class Opt
             "Camera position. Press C while flying to switch (D-pad up on controller).");
         Hud = Add(display, "hud", "FLIGHT HUD", true,
             "Jet style HUD with speed, altitude, heading, pitch ladder, throttle, hull, gun heat and warnings.");
-        HudColour = Add(display, "hud_colour", "HUD COLOUR", new[] { "green", "amber", "cyan", "white" }, new[] { "GREEN", "AMBER", "CYAN", "WHITE" },
+        HudColour = Add(display, "hud_colour", "HUD COLOUR", new[] { "blue", "green", "amber", "white" }, new[] { "BLUE", "GREEN", "AMBER", "WHITE" },
             "HUD and deck colour.");
         HudSize = Add(display, "hud_size", "HUD SIZE", 1f, 0.7f, 1.4f, 0.05f, Fmt.Times, "HUD scale.");
         SpeedUnit = Add(display, "speed_unit", "SPEED UNIT", new[] { "mph", "kmh", "ms" }, new[] { "MPH", "KM/H", "M/S" }, "Speed unit on the HUD.");

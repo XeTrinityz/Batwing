@@ -15,9 +15,9 @@ internal static class Palette
 {
     private static readonly Rgba[] Phosphors =
     {
+        new(96, 204, 244),
         new(118, 255, 136),
         new(255, 186, 56),
-        new(96, 224, 255),
         new(232, 240, 236),
     };
 
@@ -31,13 +31,16 @@ internal static class Palette
 
     public static readonly Rgba Caution = new(255, 186, 56);
     public static readonly Rgba Warn = new(255, 84, 70);
-    public static readonly Rgba Screen = new(5, 8, 6, 236);
+    private static readonly Rgba ScreenBase = new(5, 7, 8, 236);
+    private const float ScreenTint = 0.04f;
+
+    public static Rgba Screen { get; private set; } = Rgba.Mix(ScreenBase, Phosphors[0] with { A = 236 }, ScreenTint);
     public static readonly Rgba Bezel = new(22, 25, 27, 250);
     public static readonly Rgba BezelEdge = new(58, 64, 68);
     public static readonly Rgba Black = new(0, 0, 0);
     public static readonly Rgba White = new(255, 255, 255);
 
-    public static Rgba CautionNow => Opt.HudColour.Index == 1 ? new Rgba(240, 244, 240) : Caution;
+    public static Rgba CautionNow => Opt.HudColour.Key == "amber" ? new Rgba(240, 244, 240) : Caution;
 
     private static int _index = -1;
 
@@ -53,5 +56,6 @@ internal static class Palette
         Text = p.Dim(0.86f);
         Dim = p.Dim(0.55f);
         Faint = p.Dim(0.3f);
+        Screen = Rgba.Mix(ScreenBase, p with { A = 236 }, ScreenTint);
     }
 }

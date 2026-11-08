@@ -58,6 +58,7 @@ internal sealed partial class Wing
     private Every _foeScan;
     private bool _locking;
     private bool _lockFull;
+    private bool _stacked;
     private double _lockDue;
     private double _salvoDue;
     private double _barrageReady;
@@ -103,6 +104,9 @@ internal sealed partial class Wing
         public bool Gun;
         public bool Cannon;
         public bool Lock;
+
+        // A tap while locking puts one more missile on the aimed target.
+        public bool Stack;
         public Vector3 Look;
         public Actor? Target;
 
@@ -114,15 +118,23 @@ internal sealed partial class Wing
 
     private Vector3 _look = Vector3.UnitX;
 
-    private Orders PlayerOrders(bool listening) => new()
+    private Orders PlayerOrders(bool listening)
     {
-        Gun = listening && (Down(VkLButton) || Pad.Button("x")),
-        Cannon = listening && (Pressed('Q') | PadPressed("rb")),
-        Lock = listening && (Down(VkRButton) || Pad.Button("a")),
-        Look = Opt.Direct ? _fm.Forward : AimDir(),
-        Thugs = true,
-        Homing = Opt.CannonHoming.On,
-    };
+        // The gun edge is read every frame so a click held from before the lock doesn't count as a tap.
+        bool gun = listening && (Down(VkLButton) || Pad.Button("x"));
+        bool tap = listening && (Pressed(VkLButton) | PadPressed("x"));
+        bool lockHeld = listening && (Down(VkRButton) || Pad.Button("a"));
+        return new Orders
+        {
+            Gun = gun && !lockHeld,
+            Stack = tap && lockHeld,
+            Cannon = listening && (Pressed('Q') | PadPressed("rb")),
+            Lock = lockHeld,
+            Look = Opt.Direct ? _fm.Forward : AimDir(),
+            Thugs = true,
+            Homing = Opt.CannonHoming.On,
+        };
+    }
 
     private void WeaponsStep(RPawnPlayer pawn, in Orders orders, float dt)
     {
@@ -173,7 +185,7 @@ internal sealed partial class Wing
         Guns(craft, pawn, vulcan, gun, dt, now);
         if (cannon)
             Cannon(heavy, now, orders.Homing);
-        Missiles(craft, launcher, lockHeld, now);
+        Missiles(craft, launcher, lockHeld, orders.Stack, now);
     }
 
     private void Aim(RBatwing craft, Actor? ordered, bool thugs)
@@ -501,7 +513,7 @@ internal sealed partial class Wing
         _fm.Rates += new Vector3(0f, 0.25f, 0f);
     }
 
-    private void Missiles(RBatwing craft, RBatmobileMissileLauncher? launcher, bool held, double now)
+    private void Missiles(RBatwing craft, RBatmobileMissileLauncher? launcher, bool held, bool stack, double now)
     {
         _locks.RemoveAll(v => !Foe(v));
 
@@ -544,16 +556,38 @@ internal sealed partial class Wing
 
         if (held && now >= _barrageReady)
         {
+            int most = Math.Clamp(Car.BarrageSize(launcher) is > 0 and int top ? top : BarrageFallback, 1, 16);
+            if (_locks.Count < most)
+                _lockFull = false;
+
             if (!_locking)
             {
                 _locking = true;
                 _lockFull = false;
+                _stacked = false;
                 _locks.Clear();
                 _lockDue = now;
             }
 
-            int most = Math.Clamp(Car.BarrageSize(launcher) is > 0 and int top ? top : BarrageFallback, 1, 16);
-            if (_locks.Count < most && now >= _lockDue && NextLock(craft) is { } foe)
+            if (stack && StackTarget(craft) is { } aimed)
+            {
+                // Once the player starts stacking, auto locks stop spreading the barrage around.
+                _stacked = true;
+                if (_locks.Count >= most)
+                {
+                    int spare = _locks.FindLastIndex(l => l.Ptr != aimed.Ptr);
+                    if (spare >= 0)
+                        _locks.RemoveAt(spare);
+                }
+
+                if (_locks.Count < most)
+                {
+                    _locks.Add(aimed);
+                    Sound(launcher.LockOnSound);
+                }
+            }
+
+            if (!_stacked && _locks.Count < most && now >= _lockDue && NextLock(craft, false) is { } foe)
             {
                 _locks.Add(foe);
                 _lockDue = now + LockGap;
@@ -587,7 +621,11 @@ internal sealed partial class Wing
         _barrageReady = now + BarrageCooldown;
     }
 
-    private Actor? NextLock(RBatwing craft)
+    // The foe under the crosshair, or the last lock if the aim has drifted off everything.
+    private Actor? StackTarget(RBatwing craft) =>
+        NextLock(craft, true) ?? (_locks.Count > 0 ? _locks[^1] : null);
+
+    private Actor? NextLock(RBatwing craft, bool again)
     {
         Vector3 from = _fm.Position;
         Vector3 dir = _look;
@@ -595,7 +633,7 @@ internal sealed partial class Wing
         float bestDot = LockCone;
         foreach (Actor foe in _foes)
         {
-            if (!Foe(foe) || _locks.Exists(l => l.Ptr == foe.Ptr))
+            if (!Foe(foe) || (!again && _locks.Exists(l => l.Ptr == foe.Ptr)))
                 continue;
             Vector3 to = foe.Location - from;
             float dist = to.Length();

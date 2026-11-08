@@ -28,6 +28,12 @@ internal static class Readout
 
     private static void Show(string title, string text, bool good, float seconds)
     {
+        if (_left <= 0f)
+        {
+            _started = ToastLane.Now;
+            _top = -1f;
+        }
+
         _title = title;
         _text = text;
         _good = good;
@@ -35,9 +41,17 @@ internal static class Readout
         _length = seconds;
     }
 
+    private static long _started;
+    private static float _top = -1f;
+
     public static bool Showing => _left > 0f;
 
-    public static void Advance(float dt) => _left = Math.Max(0f, _left - dt);
+    public static void Advance(float dt)
+    {
+        _left = Math.Max(0f, _left - dt);
+        if (_left <= 0f)
+            ToastLane.Clear(Shared.OwnerName);
+    }
 
     public static void Draw()
     {
@@ -55,7 +69,11 @@ internal static class Readout
         float w = pad + tw + S(22) + mw + pad;
         float h = S(34);
         float x = MathF.Round((Gfx.W - w) * 0.5f);
-        float y = MathF.Round(S(118) - S(8) * (1f - Alpha));
+        // Slides rather than jumps when a toast above it goes away.
+        float want = ToastLane.Top(Shared.OwnerName, _started, S(118), S(8));
+        _top = _top < 0f ? want : _top + (want - _top) * Math.Min(1f, Gfx.Dt * 12f);
+        float y = MathF.Round(_top - S(8) * (1f - Alpha));
+        ToastLane.Post(Shared.OwnerName, _started, y + h);
 
         Rect(x, y, w, h, Palette.Screen, 0.9f);
         Rect(x, y + h - MathF.Max(1f, S(2)), w, MathF.Max(1f, S(2)), col, 0.9f);
