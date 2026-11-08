@@ -1,4 +1,4 @@
 name = "Batwing"
 author = "XeTrinityz"
-version = "1.2.0"
+version = "1.2.1"
 description = "Call in the Batwing and fly it around Gotham. Proper flight model with stalls and a VTOL hover, and it uses your Batmobile's weapons. Fly it by remote or have it escort you. Y calls the Batwing, U remote control, I escort, T orders a strike, F4 opens the settings menu. Settings are saved in settings.toml."

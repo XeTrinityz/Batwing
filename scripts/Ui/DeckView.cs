@@ -13,6 +13,9 @@ internal static class DeckView
     private const float SideW = 124f;
     private const float FootH = 66f;
     private const float RowH = 31f;
+
+    private static int _scroll;
+    private static Page? _scrollPage;
     private const float Inset = 14f;
     private const float ValueW = 236f;
 
@@ -163,12 +166,40 @@ internal static class DeckView
         float ry = top + U(8f);
         float age = (float)(Time - Deck.PageChangedAt);
         List<Option> rows = Deck.Current.Options;
-        for (int j = 0; j < rows.Count && ry + rowH <= top + bodyH; j++)
+
+        // Pages can hold more rows than fit, so scroll to keep the selected one in view.
+        int fit = Math.Max(1, (int)((bodyH - U(8f)) / rowH));
+        if (!ReferenceEquals(_scrollPage, Deck.Current))
         {
+            _scrollPage = Deck.Current;
+            _scroll = 0;
+        }
+
+        if (Deck.Level == 1)
+        {
+            if (Deck.RowIndex < _scroll)
+                _scroll = Deck.RowIndex;
+            else if (Deck.RowIndex >= _scroll + fit)
+                _scroll = Deck.RowIndex - fit + 1;
+        }
+
+        _scroll = Math.Clamp(_scroll, 0, Math.Max(0, rows.Count - fit));
+        if (rows.Count > fit)
+        {
+            float track = fit * rowH;
+            float thumb = MathF.Max(U(12f), track * fit / rows.Count);
+            float at = (track - thumb) * _scroll / (rows.Count - fit);
+            Rect(x + w - U(4f), ry, U(2f), track, Palette.Dim, 0.35f);
+            Rect(x + w - U(4f), ry + at, U(2f), thumb, Palette.Hud, 0.9f);
+        }
+
+        for (int k = 0; k < fit && _scroll + k < rows.Count; k++)
+        {
+            int j = _scroll + k;
             Option o = rows[j];
             bool selected = Deck.Level == 1 && j == Deck.RowIndex;
             float cy = ry + rowH * 0.5f;
-            float cascade = Fx ? Ease.Out(Math.Clamp((age - j * 0.03f) / 0.18f, 0f, 1f)) : 1f;
+            float cascade = Fx ? Ease.Out(Math.Clamp((age - k * 0.03f) / 0.18f, 0f, 1f)) : 1f;
             float was = Alpha;
             Alpha = was * cascade;
 
@@ -179,7 +210,7 @@ internal static class DeckView
             }
 
             Rgba labelCol = selected ? Palette.Hud : Palette.Text;
-            string label = Decode(o.LabelNow, age - j * 0.03f);
+            string label = Decode(o.LabelNow, age - k * 0.03f);
             if (o is Act)
             {
                 float bw = TextW(label, Sc(LabelScale)) + U(18);
