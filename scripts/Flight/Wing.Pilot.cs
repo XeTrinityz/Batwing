@@ -387,6 +387,10 @@ internal sealed partial class Wing
 
         if (Pressed('H'))
             _hintUntil = Clock.Now < _hintUntil ? 0.0 : double.MaxValue;
+
+        // The keyboard lift key comes in through KeyInput like the other mod keys.
+        if (PadPressed("down"))
+            LiftAction();
     }
 
     private const float BailWaitMost = 30f;
@@ -645,8 +649,17 @@ internal sealed partial class Wing
             return;
         }
 
+        // Dropping onto the Batmobile to hook it takes the controls for a moment.
+        if (_haul == Haul.Latch && LatchStep(dt))
+        {
+            if (!remote)
+                Carry(pawn);
+            Shake(dt);
+            return;
+        }
+
         FlightInput input = Gather(listening, turn);
-        _fm.TopSpeed = Opt.TopSpeed.Number * Metre;
+        _fm.TopSpeed = Opt.TopSpeed.Number * Metre * (Carrying ? CargoSpeed : 1f);
 
         if (Opt.Assist.On && _fm.SlowFor > 0.8f && !_fm.HoverWanted)
         {
@@ -716,10 +729,16 @@ internal sealed partial class Wing
         if (_craft is not { IsValid: true } craft || Vector3.DistanceSquared(from, to) < 0.01f)
             return true;
 
+        if (Carrying)
+        {
+            CargoCollide(from, to, hurts: true);
+            to = _fm.Position;
+        }
+
         float body = Math.Clamp(MathF.Min(_half.X, _half.Y) * 0.45f, 150f, 420f);
-        var extent = new Vector3(body, body, _half.Z * 0.8f);
+        var extent = new Vector3(body, body, BoxDepth(_half.Z * 0.8f));
         Actor? hit = craft.Trace(out Vector3 at, out Vector3 n, to, from, Component.ECollisionFilter.COF_TraceWorld, extent, out _, 0);
-        if (hit != null && at != Vector3.Zero && n.LengthSquared() > 0.5f)
+        if (hit != null && at != Vector3.Zero && n.LengthSquared() > 0.5f && !IsCargo(hit))
         {
             float into = -Vector3.Dot(_fm.Velocity, n);
             bool gentle = n.Z > 0.7f && into < LandSpeed && (_fm.Hover > 0.5f || _fm.Velocity.Length() < LandSpeed * 2f);
@@ -810,6 +829,8 @@ internal sealed partial class Wing
         Vector3 off = away.LengthSquared() > 0.01f ? Vector3.Normalize(away) : Vector3.UnitZ;
         Burst(_kit?.Explosion, at, Vector3.UnitZ);
         Burst(_kit?.Impact, at, off);
+        if (Carrying)
+            DropCargo(_fm.Velocity, gently: false);
         RPawnPlayer? pawn = HeldPawn();
         Vector3 fling = off * 900f + new Vector3(0f, 0f, 1500f) + _fm.Velocity * 0.15f;
         LetGo(pawn, new Drop(at + off * (_half.Z + 200f) + new Vector3(0f, 0f, 250f), fling, false));
@@ -830,8 +851,16 @@ internal sealed partial class Wing
         if (_craft is not { IsValid: true } craft)
             return;
 
+        // With the car hooked it measures from the car, so the car's roof isn't read as the ground.
         Vector3 bottom = at - new Vector3(0f, 0f, _half.Z * 0.6f);
-        if (Ground.Ray(craft, bottom, bottom - new Vector3(0f, 0f, GroundReach), out Vector3 hit, out Vector3 n))
+        Actor tracer = craft;
+        if (_cargo is { IsValid: true } car)
+        {
+            tracer = car;
+            bottom = car.Location;
+        }
+
+        if (Ground.Ray(tracer, bottom, bottom - new Vector3(0f, 0f, GroundReach), out Vector3 hit, out Vector3 n))
         {
             distance = bottom.Z - hit.Z;
             point = hit;

@@ -51,10 +51,22 @@ internal sealed partial class Wing
             HeadingTape();
             Status();
             Alerts();
+            CargoMark();
         }
 
         if (Clock.Now < _hintUntil)
             KeysCard();
+    }
+
+    // Brackets the Batmobile when it's under the craft and close enough to hook.
+    private void CargoMark()
+    {
+        if (Carrying || _haul == Haul.Latch || !WorldView.Ready || Hookable(out _) is not { } car)
+            return;
+
+        Brackets(car.Location, U(16f), Palette.Hud, Thick);
+        if (WorldView.ToScreen(car.Location, out Vector2 p))
+            TextMid(p.X + U(22f), p.Y, (Pad.InUse ? "D-PAD DOWN" : Opt.LiftKey.Value) + " HOOK", Palette.Hud, Sc(0.4f));
     }
 
     private void Inbound()
@@ -84,14 +96,35 @@ internal sealed partial class Wing
         HoldToastSpot(y + h);
         Rect(x, y, w, h, Palette.Screen, 0.85f);
         Rect(x, y, U(3), h, Palette.Hud, 0.9f);
-        Spaced(x + U(16), y + U(7), "BATWING ESCORT", Palette.Hud, Sc(0.56f), 2f);
-        string state = _pickup ? "PICKUP" : _strike != null ? (_strike is RPawnVillain ? "STRIKING" : "CHASING") : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
-        TextRight(x + w - U(16), y + U(16), state, _strike != null ? Palette.CautionNow : Palette.Text, Sc(0.5f));
-        TextMid(x + U(16), y + h - U(13), "STRIKE: " + Opt.StrikeKey.Value + "  BOARD: " + Opt.CallKey.Value + "  DISMISS: " + Opt.EscortKey.Value, Palette.Dim, Sc(0.4f));
+        if (Hauling)
+        {
+            Spaced(x + U(16), y + U(7), _delivery ? "BATMOBILE DELIVERY" : "BATMOBILE LIFT", Palette.Hud, Sc(0.56f), 2f);
+            TextRight(x + w - U(16), y + U(16), HaulState(), Palette.Text, Sc(0.5f));
+            string undo = _delivery ? "MARK SPOT: " : Carrying ? "SET DOWN: " : "CANCEL: ";
+            TextMid(x + U(16), y + h - U(13), undo + Opt.LiftKey.Value + "  DISMISS: " + Opt.EscortKey.Value, Palette.Dim, Sc(0.4f));
+        }
+        else
+        {
+            Spaced(x + U(16), y + U(7), "BATWING ESCORT", Palette.Hud, Sc(0.56f), 2f);
+            string state = Catching ? "CATCHING" : _pickup ? "PICKUP" : _strike != null ? (_strike is RPawnVillain ? "STRIKING" : "CHASING") : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
+            TextRight(x + w - U(16), y + U(16), state, _strike != null ? Palette.CautionNow : Palette.Text, Sc(0.5f));
+            string keys = World.Pawn is RVehicleBatmobileBase
+                ? "LIFT: " + Opt.LiftKey.Value + "  DISMISS: " + Opt.EscortKey.Value
+                : "STRIKE: " + Opt.StrikeKey.Value + "  BOARD: " + Opt.CallKey.Value + "  DISMISS: " + Opt.EscortKey.Value;
+            TextMid(x + U(16), y + h - U(13), keys, Palette.Dim, Sc(0.4f));
+        }
 
         WorldView.Begin(c);
         if (!WorldView.Ready)
             return;
+
+        // Where the Batmobile is going down.
+        if (Hauling && (_delivery || (_haul != Haul.Fetch && _haul != Haul.Latch)))
+        {
+            Brackets(_goal, U(16f), Palette.Warn, Thick);
+            if (WorldView.ToScreen(_goal, out Vector2 g))
+                TextMid(g.X + U(22f), g.Y, Fmt.Whole(FlatDistance(_fm.Position, _goal) / Metre) + " M", Palette.Warn, Sc(0.4f));
+        }
 
         float t = Thick;
         if (_strike is { IsValid: true } strike)
@@ -587,6 +620,7 @@ internal sealed partial class Wing
 
             keys.Add(("LB", "LOOK AROUND"));
             keys.Add(("D-PAD UP", "CAMERA"));
+            keys.Add(("D-PAD DOWN", Carrying ? "DROP BATMOBILE" : "HOOK BATMOBILE"));
             keys.Add(("B", _remote ? "END REMOTE" : "BAIL OUT"));
         }
         else
@@ -617,6 +651,7 @@ internal sealed partial class Wing
 
             keys.Add(("MIDDLE MOUSE", "LOOK AROUND"));
             keys.Add(("C", "CAMERA"));
+            keys.Add((Opt.LiftKey.Value, Carrying ? "DROP BATMOBILE" : "HOOK BATMOBILE"));
             keys.Add(("E", _remote ? "END REMOTE" : "BAIL OUT"));
             keys.Add(("H", "HIDE THESE KEYS"));
         }

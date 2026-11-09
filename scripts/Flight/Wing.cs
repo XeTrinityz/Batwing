@@ -55,9 +55,9 @@ internal sealed partial class Wing
     public string StateLabel => _phase switch
     {
         Phase.Arriving => "INBOUND",
-        Phase.Flying => _remote ? (_remoteFar ? "REMOTE // WEAK SIGNAL" : "REMOTE") : _landed ? "LANDED" : _bailWait >= 0f ? "WAITING FOR GROUND" : _fm.Boosting ? "AFTERBURNER" : _fm.Hover > 0.5f ? "HOVER" : "WINGS",
+        Phase.Flying => _remote ? (_remoteFar ? "REMOTE // WEAK SIGNAL" : "REMOTE") : _landed ? "LANDED" : _bailWait >= 0f ? "WAITING FOR GROUND" : Carrying ? "CARRYING BATMOBILE" : _fm.Boosting ? "AFTERBURNER" : _fm.Hover > 0.5f ? "HOVER" : "WINGS",
         Phase.Leaving => "DEPARTING",
-        Phase.Escort => _pickup ? "ESCORT // PICKUP" : _strike != null ? (_strike is RPawnVillain ? "ESCORT // STRIKING" : "ESCORT // CHASING") : EscortTarget() != null ? "ESCORT // ENGAGING" : "ESCORT",
+        Phase.Escort => Hauling ? (_delivery ? "DELIVERY // " : "LIFT // ") + HaulState() : Catching ? "ESCORT // CATCHING" : _pickup ? "ESCORT // PICKUP" : _strike != null ? (_strike is RPawnVillain ? "ESCORT // STRIKING" : "ESCORT // CHASING") : EscortTarget() != null ? "ESCORT // ENGAGING" : "ESCORT",
         _ => World.InGame ? "STANDBY" : "NO WORLD",
     };
 
@@ -128,8 +128,38 @@ internal sealed partial class Wing
         Pad.HoldButtons = false;
     }
 
+    private double _viewAt;
+    private bool _tickStepSaid;
+
     public void Tick(float dt)
     {
+        Safe.Run("batwing drop", FallStep);
+        Safe.Run("batwing settle", SettleStep);
+
+        // The escort and departure normally run from Batman's camera update. If that goes quiet, like it
+        // might in the Batmobile, run them from the game tick so the Batwing doesn't freeze in the air.
+        if (_phase is not (Phase.Escort or Phase.Leaving) || Clock.Now - _viewAt < 0.25 || World.Paused || World.Pc is not { } pc)
+            return;
+
+        if (!_tickStepSaid)
+        {
+            _tickStepSaid = true;
+            Log.Info(Title + ": camera update went quiet (camera " + (pc.PlayerCamera?.Class.Name.ToString() ?? "none") + ", pawn "
+                + (World.Pawn?.Class.Name.ToString() ?? "none") + "), running from the game tick.");
+        }
+
+        try
+        {
+            float step = Math.Clamp(dt, 0f, 0.1f);
+            if (_phase == Phase.Escort)
+                EscortStep(pc, step);
+            else
+                LeaveStep(step);
+        }
+        catch (Exception ex)
+        {
+            Fail(ex);
+        }
     }
 
     public void Frame()
@@ -239,6 +269,12 @@ internal sealed partial class Wing
             return;
 
         _bailWait = -1f;
+        if (_cargo is { } held)
+        {
+            bool low = Floor(held, _rest + LowDrop, out _);
+            DropCargo(low ? Vector3.Zero : _fm.Velocity, low);
+        }
+
         RPawnPlayer? pawn = HeldPawn();
         LetGo(pawn, Bail());
         if (pawn is { IsValid: true } && EscortAfterBail(pawn.Location))
@@ -260,6 +296,9 @@ internal sealed partial class Wing
 
         DropCraft();
         _phase = Phase.Off;
+        _haul = Haul.None;
+        _liftCar = null;
+        _catchUntil = -1.0;
         _blendIn = 0f;
         if (silent)
         {
@@ -289,6 +328,7 @@ internal sealed partial class Wing
         }
 
         Safe.Run("batwing remote leftover", RecoverRemote);
+        Safe.Run("batwing cargo leftover", RecoverCargo);
 
         if (!Shared.GetValue(HeldKey, false))
             return;

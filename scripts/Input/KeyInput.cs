@@ -32,5 +32,7 @@ internal static class KeyInput
             Wing.I.EscortToggle();
         else if (key == Opt.StrikeKey.Key)
             Wing.I.Strike();
+        else if (key == Opt.LiftKey.Key)
+            Wing.I.LiftAction();
     }
 }

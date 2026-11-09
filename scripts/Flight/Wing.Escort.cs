@@ -71,7 +71,15 @@ internal sealed partial class Wing
     {
         if (_pickup)
             return true;
+        if (Carrying)
+            throw new InvalidOperationException("set the Batmobile down first");
+        if (Hauling)
+        {
+            _haul = Haul.None;
+            _liftCar = null;
+        }
 
+        _catchUntil = -1.0;
         Vector3 belly = _fm.Position - new Vector3(0f, 0f, _half.Z + 80f);
         float reach = Vector3.Distance(pawn.Location, belly);
         if (airborne)
@@ -166,6 +174,14 @@ internal sealed partial class Wing
     {
         if (Escorting)
         {
+            // Never drops the Batmobile from the sky. It sets it down first and leaves after.
+            if (Carrying)
+            {
+                _dismissAfter = true;
+                SetDownHere();
+                return;
+            }
+
             Safe.Run("batwing escort end", () => EndEscort("ESCORT DISMISSED"));
             return;
         }
@@ -178,7 +194,10 @@ internal sealed partial class Wing
 
         try
         {
-            StartEscort();
+            if (World.Pawn is RVehicleBatmobileBase car)
+                StartEscort(RequireCar(car));
+            else
+                StartEscort();
         }
         catch (Exception ex)
         {
@@ -187,9 +206,24 @@ internal sealed partial class Wing
         }
     }
 
-    private void StartEscort()
+    // The checks Require does for Batman on foot, for when he's driving.
+    private static RVehicleBatmobileBase RequireCar(RVehicleBatmobileBase car)
     {
-        RPawnPlayer pawn = Require();
+        if (!World.Ready)
+            throw new InvalidOperationException("the game is still loading");
+        if (World.Paused)
+            throw new InvalidOperationException("not while paused");
+        if (World.Pc is not { } pc || Hooks.InCinematic(pc))
+            throw new InvalidOperationException("not during a cutscene");
+        if (!Ground.InCity(car.Location))
+            throw new InvalidOperationException("only out in the city");
+        return car;
+    }
+
+    // Brought in for a lift or from the driver's seat, it comes to the Batmobile instead of Batman on foot.
+    private void StartEscort(Pawn? lead = null)
+    {
+        Pawn pawn = lead ?? Require();
         Kit kit = LoadKit();
 
         Vector3 over = pawn.Location + new Vector3(0f, 0f, StationHeight + 2000f);
@@ -244,6 +278,12 @@ internal sealed partial class Wing
         _foesNear = 0;
         _nextCannon = _nextBarrage = _lockUntil = 0.0;
         _escortPick.Force();
+        _haul = Haul.None;
+        _liftCar = null;
+        _catchUntil = -1.0;
+        _swoopT = -1f;
+        _drove = World.Pawn is RVehicleBatmobileBase;
+        _leadLostAt = _cutsceneAt = -1.0;
         _phase = Phase.Escort;
     }
 
@@ -265,6 +305,12 @@ internal sealed partial class Wing
 
         EndEscortCombat();
         _pickup = false;
+        _haul = Haul.None;
+        _liftCar = null;
+        _catchUntil = -1.0;
+        if (Carrying)
+            DropCargo(Vector3.Zero, gently: true);
+        Log.Info(Title + ": escort ended, " + why.ToLowerInvariant() + ".");
         Depart(0f);
         Toast(why);
     }
@@ -276,6 +322,11 @@ internal sealed partial class Wing
     {
         if (!Escorting || _marking)
             return;
+        if (Hauling)
+        {
+            Readout.Notice(Title, "BUSY WITH THE BATMOBILE", false);
+            return;
+        }
 
         _marking = true;
         _marks.Clear();
@@ -464,31 +515,63 @@ internal sealed partial class Wing
         if (dt <= 0f)
             return;
 
-        // The Batmobile when he's driving, Batman otherwise.
+        // The Batmobile when he's driving, Batman otherwise. Getting in or out of the car can leave the
+        // controller without a pawn or Batman for a moment, so only a lasting gap ends it.
         Pawn? lead = World.Pawn;
-        RPawnPlayer? batman = World.Player;
-        if (lead is not { IsValid: true } || batman is not { IsValid: true } || batman.Health <= 0)
+        RPawnPlayer? batman = World.Player ?? (lead as RVehicleBatmobileBase)?.Driver as RPawnPlayer;
+        if (batman is { IsValid: true } && batman.Health <= 0)
         {
             EndEscort("ESCORT ENDED");
             return;
         }
 
-        if (Hooks.InCinematic(pc))
+        if (lead is not { IsValid: true } || batman is not { IsValid: true })
         {
-            EndEscort("LEFT FOR A CUTSCENE");
+            double now = Clock.Now;
+            if (_leadLostAt < 0.0)
+            {
+                _leadLostAt = now;
+                Log.Info(Title + ": escort lost track of Batman (pawn " + (lead?.Class.Name.ToString() ?? "none") + ", Batman " + (batman != null ? "yes" : "no") + "), holding.");
+            }
+
+            if (now - _leadLostAt > LostGrace)
+                EndEscort("ESCORT ENDED");
             return;
         }
 
-        Vector3 centre = lead.Location;
-        if (_escortPick.Elapsed(0.5))
-            Safe.Run("batwing escort targets", () => PickFoe(craft, centre));
-        if (_strikeLook.Elapsed(0.1))
-            _strikeAim = lead is RPawnPlayer ? StrikeCandidate(centre) : null;
-        Marking();
-        StrikeCheck(centre);
+        if (_leadLostAt >= 0.0)
+        {
+            Log.Info(Title + ": escort found Batman again after " + Fmt.Tenths((float)(Clock.Now - _leadLostAt)) + " s, in " + lead.Class.Name + ".");
+            _leadLostAt = -1.0;
+        }
 
-        FlightInput input = Autopilot(craft, centre, dt);
-        _fm.TopSpeed = Opt.TopSpeed.Number * Metre;
+        if (CutsceneCheck(pc))
+            return;
+
+        EjectCheck(lead);
+        // Still holding the car with no job, like after a missed catch, so put it down.
+        if (Carrying && !Hauling && !Catching)
+            SetDownHere();
+
+        Vector3 centre = lead.Location;
+        bool busy = Hauling || Catching;
+        if (!busy)
+        {
+            if (_escortPick.Elapsed(0.5))
+                Safe.Run("batwing escort targets", () => PickFoe(craft, centre));
+            if (_strikeLook.Elapsed(0.1))
+                _strikeAim = lead is RPawnPlayer ? StrikeCandidate(centre) : null;
+            Marking();
+            StrikeCheck(centre);
+        }
+
+        if (Hauling && !HaulBefore(dt))
+            return;
+        if (Catching && lead is RPawnPlayer flier && Swoop(flier, dt))
+            return;
+
+        FlightInput input = Autopilot(craft, centre, batman, dt);
+        _fm.TopSpeed = Opt.TopSpeed.Number * Metre * (Carrying ? CargoSpeed : 1f);
         Vector3 from = _fm.Position;
         _fm.Step(dt, input);
         EscortCollide(craft, from);
@@ -496,6 +579,27 @@ internal sealed partial class Wing
         Place(_fm.Position, _fm.Forward, _fm.Right, _fm.Up);
         GroundBelow(_fm.Position, out _ground, out _groundAt, out _groundNormal);
         UpdateEffects(_fm.Hover, _fm.Boosting, _fm.Position, _ground, _groundAt, _groundNormal, _fm.Jets, _fm.Velocity, _fm.Throttle, _fm.GLoad, dt);
+
+        // Batman rides in the car, so the city has to load ahead of the Batwing like it does when he flies it.
+        if (Carrying && !_delivery)
+        {
+            KeepLoading();
+            if (_districts.Elapsed(0.3))
+                Lead();
+        }
+
+        if (Hauling)
+        {
+            HaulAfter(dt);
+            return;
+        }
+
+        if (Catching)
+        {
+            if (lead is RPawnPlayer flying)
+                CatchCheck(flying);
+            return;
+        }
 
         if (_pickup)
         {
@@ -505,6 +609,38 @@ internal sealed partial class Wing
 
         Orders orders = EscortOrders();
         Safe.Run("batwing escort weapons", () => WeaponsStep(batman, orders, dt));
+    }
+
+    private const double LostGrace = 2.0;
+    private const double CutsceneGrace = 1.5;
+
+    private double _leadLostAt = -1.0, _cutsceneAt = -1.0;
+
+    // The cinematic flag can blink on during moves like getting into the Batmobile. Only a real cutscene that
+    // keeps it on sends the escort away. True when it ended.
+    private bool CutsceneCheck(PlayerController pc)
+    {
+        double now = Clock.Now;
+        if (!Hooks.InCinematic(pc))
+        {
+            if (_cutsceneAt >= 0.0)
+                Log.Info(Title + ": cinematic flag went off after " + Fmt.Tenths((float)(now - _cutsceneAt)) + " s, escort carries on.");
+            _cutsceneAt = -1.0;
+            return false;
+        }
+
+        if (_cutsceneAt < 0.0)
+        {
+            _cutsceneAt = now;
+            string mode = pc is RPlayerControllerBase { ActiveCinematicMode: { IsValid: true } act } ? act.Class.Name.ToString() ?? "?" : "none";
+            Log.Info(Title + ": cinematic flag on during escort (bCinematicMode " + pc.bCinematicMode + ", sequence " + mode + ", pawn " + (World.Pawn?.Class.Name.ToString() ?? "none") + ").");
+        }
+
+        if (now - _cutsceneAt < CutsceneGrace)
+            return false;
+
+        EndEscort("LEFT FOR A CUTSCENE");
+        return true;
     }
 
     private void StrikeCheck(Vector3 centre)
@@ -588,10 +724,12 @@ internal sealed partial class Wing
     // takes a firing spot off the target instead, kept within reach of Batman.
     private Vector3 Station(RBatwing craft, Vector3 centre, Actor? target, float dt)
     {
-        if (target?.Ptr != _spotFor)
+        // A missing target compared as never equal, so with nothing to shoot it searched for a spot every frame.
+        if ((target?.Ptr ?? 0) != _spotFor)
         {
             _spotFor = target?.Ptr ?? 0;
             _roadSpot = null;
+            _raise = 0f;
             if (target != null)
                 _attackAngle = MathF.Atan2(_fm.Position.Y - target.Location.Y, _fm.Position.X - target.Location.X);
             _spotCheck.Force();
@@ -658,14 +796,16 @@ internal sealed partial class Wing
         return MathF.Sqrt(x * x + y * y);
     }
 
-    private Vector3 SpotFor(Vector3 centre, Actor? target, float angle)
+    private Vector3 SpotFor(Vector3 centre, Actor? target, float angle) => SpotFor(centre, target, angle, _raise);
+
+    private Vector3 SpotFor(Vector3 centre, Actor? target, float angle, float raise)
     {
         var dir = new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0f);
         if (target == null)
-            return new Vector3(centre.X + dir.X * StationRadius, centre.Y + dir.Y * StationRadius, centre.Z + StationHeight + _climb);
+            return new Vector3(centre.X + dir.X * StationRadius, centre.Y + dir.Y * StationRadius, centre.Z + StationHeight + raise + _climb);
 
         Vector3 t = Watched(target);
-        var spot = new Vector3(t.X + dir.X * Standoff, t.Y + dir.Y * Standoff, t.Z + StandoffHeight + _climb);
+        var spot = new Vector3(t.X + dir.X * Standoff, t.Y + dir.Y * Standoff, t.Z + StandoffHeight + raise + _climb);
         var pull = new Vector3(spot.X - centre.X, spot.Y - centre.Y, 0f);
         float reach = pull.Length();
         if (reach > EngageRange)
@@ -673,25 +813,49 @@ internal sealed partial class Wing
         return spot;
     }
 
+    // Extra height tried when nothing at the normal height is clear, lowest first.
+    private static readonly float[] Raises = { 0f, 1500f, 3500f, 6000f };
+
+    private float _raise;
+
     // Tries the current angle first, then 30 degrees either side, further and further round, for a spot with
-    // room for the wings and a clear line to whoever it's watching. If none is clear it keeps moving round.
+    // room for the wings and a clear line to whoever it's watching. Higher spots get fewer angles to keep the
+    // traces down. Under a roof or deep between buildings there may be no line to him at all, so after that
+    // any spot with room for the wings will do, as low as it can. If nothing is clear it keeps moving round.
     private float ClearAngle(RBatwing craft, Vector3 centre, Actor? target, float angle)
     {
         Vector3 watch = target?.Location ?? centre + new Vector3(0f, 0f, 300f);
-        for (int i = 0; i <= 12; i++)
+        for (int pass = 0; pass < 2; pass++)
         {
-            float step = (i + 1) / 2 * SpotStep * (i % 2 == 1 ? 1f : -1f);
-            float a = angle + step;
-            if (SpotClear(craft, SpotFor(centre, target, a), watch, SpotRoom))
-                return a;
+            foreach (float raise in Raises)
+            {
+                int tries = raise == 0f ? 12 : 6;
+                for (int i = 0; i <= tries; i++)
+                {
+                    float step = (i + 1) / 2 * SpotStep * (i % 2 == 1 ? 1f : -1f);
+                    float a = angle + step;
+                    if (!SpotClear(craft, SpotFor(centre, target, a, raise), pass == 0 ? watch : null, SpotRoom))
+                        continue;
+
+                    if (raise != _raise)
+                        Log.Detail(Title + ": escort spot " + (raise > 0f ? Fmt.Whole(raise / Metre) + " m higher" : "back to normal height") + (pass == 1 ? ", out of sight of the target." : "."));
+                    _raise = raise;
+                    return a;
+                }
+            }
         }
 
+        _raise = Raises[^1];
         return angle + SpotStep;
     }
 
-    private bool SpotClear(RBatwing craft, Vector3 spot, Vector3 watch, float spare)
+    // A clear line to whoever it watches, nothing through the spot itself, and room round it for the wings.
+    // The box catches thin beams and girders that slip between the rays.
+    private bool SpotClear(RBatwing craft, Vector3 spot, Vector3? watch, float spare)
     {
-        if (Ground.Ray(craft, watch, spot, out _, out _))
+        if (watch is { } w && Ground.Ray(craft, w, spot, out _, out _))
+            return false;
+        if (Swept(craft, spot + new Vector3(0f, 0f, 300f), spot - new Vector3(0f, 0f, 300f)))
             return false;
 
         float room = MathF.Max(_half.X, _half.Y) + spare;
@@ -709,8 +873,30 @@ internal sealed partial class Wing
     private bool Swept(RBatwing craft, Vector3 from, Vector3 to)
     {
         float w = MathF.Max(_half.X, _half.Y) * 0.5f;
-        Actor? hit = craft.Trace(out Vector3 at, out _, to, from, Component.ECollisionFilter.COF_TraceWorld, new Vector3(w, w, _half.Z), out _, 0);
-        return hit != null && at != Vector3.Zero;
+        Actor? hit = craft.Trace(out Vector3 at, out _, to, from, Component.ECollisionFilter.COF_TraceWorld, new Vector3(w, w, BoxDepth(_half.Z)), out _, 0);
+        return hit != null && at != Vector3.Zero && !IsCargo(hit);
+    }
+
+    // With the car hooked, the craft's own boxes stop short of its roof. The car gets its own sweep.
+    private float BoxDepth(float want) => Carrying ? MathF.Max(40f, MathF.Min(want, _hang - _cargoTop - 20f)) : want;
+
+    // Rays tilted up and down as well as flat, so beams that cross above or below it count too.
+    private static readonly Vector3[] FeelDirs = BuildFeelDirs();
+
+    private static Vector3[] BuildFeelDirs()
+    {
+        var dirs = new List<Vector3>();
+        for (int i = 0; i < 12; i++)
+            dirs.Add(Geo.Facing(i * 30f));
+        for (int i = 0; i < 8; i++)
+        {
+            Vector3 flat = Geo.Facing(i * 45f + 22.5f) * 0.82f;
+            dirs.Add(flat + new Vector3(0f, 0f, 0.57f));
+            dirs.Add(flat - new Vector3(0f, 0f, 0.57f));
+        }
+
+        dirs.Add(Vector3.UnitZ);
+        return dirs.ToArray();
     }
 
     // Short rays all round the craft. Anything they touch pushes it away, harder the closer it is.
@@ -719,10 +905,15 @@ internal sealed partial class Wing
         Vector3 at = _fm.Position;
         float span = MathF.Max(_half.X, _half.Y);
         Vector3 push = Vector3.Zero;
-        for (int i = 0; i <= 12; i++)
+        foreach (Vector3 d in FeelDirs)
         {
-            Vector3 d = i < 12 ? Geo.Facing(i * 30f) : Vector3.UnitZ;
-            if (!Ground.Ray(craft, at, at + d * (span + AvoidRange), out Vector3 hit, out _))
+            Actor? what = craft.Trace(out Vector3 hit, out Vector3 face, at + d * (span + AvoidRange), at, Component.ECollisionFilter.COF_TraceWorld, Vector3.Zero, out _, 0);
+            if (what == null || hit == Vector3.Zero || IsCargo(what))
+                continue;
+
+            // Floor under it is where it lands, not something to shy away from. Pushing off it held the
+            // Batwing up off the street when it was setting the car down.
+            if (d.Z <= 0f && face.Z > 0.7f)
                 continue;
             float near = Math.Clamp(1f - (Vector3.Distance(at, hit) - span) / AvoidRange, 0f, 1f);
             push -= d * near;
@@ -731,15 +922,18 @@ internal sealed partial class Wing
         _avoid = push;
     }
 
-    private FlightInput Autopilot(RBatwing craft, Vector3 centre, float dt)
+    private FlightInput Autopilot(RBatwing craft, Vector3 centre, RPawnPlayer batman, float dt)
     {
         Vector3 at = _fm.Position;
-        Actor? target = _pickup ? null : EscortTarget();
+
+        // Catching an eject or hauling the Batmobile, it goes where that needs and fights nothing.
+        Vector3? job = Catching && World.Pawn is RPawnPlayer ? CatchSpot(batman) : HaulSpot();
+        Actor? target = _pickup || job != null ? null : EscortTarget();
 
         // A chased vehicle pulls the Batwing away from Batman, so the spot is kept near the vehicle instead.
         // The strike check ends the chase if it gets too far from him.
         bool chase = Chasing(target);
-        Vector3 station = _pickup ? PickupSpot(centre) : Station(craft, chase ? target!.Location : centre, target, dt);
+        Vector3 station = job ?? (_pickup ? PickupSpot(centre) : Station(craft, chase ? target!.Location : centre, target, dt));
         float gap = Vector3.Distance(station, at);
 
         // Going down to a lower spot, get over it first and then drop straight in. The air above a road is
@@ -757,17 +951,36 @@ internal sealed partial class Wing
         {
             Vector3 path = _fm.Velocity.LengthSquared() > 100f ? Vector3.Normalize(_fm.Velocity) : _fm.Forward;
             float near = MathF.Min(Math.Clamp(_fm.Velocity.Length() * 0.8f, 600f, 6000f), toLen);
-            _escortBlocked = (toLen > 300f && Swept(craft, at, goal)) || Swept(craft, at, at + path * near);
+            Vector3 ahead = at + path * near;
+            _escortBlocked = (toLen > 300f && (Swept(craft, at, goal) || CargoSwept(at, goal))) || Swept(craft, at, ahead) || CargoSwept(at, ahead);
         }
 
-        _climb = _escortBlocked ? MathF.Min(_climb + 1500f * dt * 4f, ClimbMost) : MathF.Max(0f, _climb - 800f * dt);
-        Unstick(centre, gap, dt, chase && target!.Velocity.Length() > ChaseMoving);
+        // Hauling, a blocked path raises the cruise height a bit at a time instead. The extra climb tipped the
+        // nose up so hard with the car that it went far higher than it needed.
+        if (Hauling)
+        {
+            _climb = 0f;
+            if (_escortBlocked && _haul == Haul.Cruise)
+                _cruiseZ = MathF.Max(_cruiseZ, at.Z + 1000f * dt * 4f);
+        }
+        else
+        {
+            _climb = _escortBlocked ? MathF.Min(_climb + 1500f * dt * 4f, ClimbMost) : MathF.Max(0f, _climb - 800f * dt);
+        }
+        if (job != null)
+            // Stopped to climb over something isn't stuck.
+            Unstick(Catching ? batman.Location : HaulHome(), gap, dt, Catching || (_haul == Haul.Cruise && Carrying && _escortBlocked), canLose: false);
+        else
+            Unstick(centre, gap, dt, chase && target!.Velocity.Length() > ChaseMoving, canLose: true);
 
         // Wings only to catch up, with Batman or a vehicle it's chasing. Never for a target it's fighting or a
         // pickup, since a jet can't stop over a spot and ends up diving at it. Measured flat so a long drop
         // into a street doesn't count as far.
         float across = FlatDistance(station, at);
-        bool hover = (target != null && !chase) || _pickup || (_fm.HoverWanted ? across < WingsFrom : across < HoverWithin);
+        // With the car hooked it flies like a helicopter the whole way, up, across and down. On the wings it
+        // was too fast to climb out of the way of buildings that only loaded in as it got close.
+        bool holdStill = Catching || Carrying || _haul is Haul.Climb or Haul.Lower;
+        bool hover = (target != null && !chase) || _pickup || holdStill || (_fm.HoverWanted ? across < WingsFrom : across < HoverWithin);
         if (hover != _fm.HoverWanted)
         {
             _fm.HoverWanted = hover;
@@ -791,12 +1004,14 @@ internal sealed partial class Wing
             if (_avoid.LengthSquared() > 0.01f)
                 aim = Vector3.Normalize(aim + _avoid * 1.5f);
             _fm.Throttle = Math.Clamp(0.55f + (CruiseSpeed * 2f - _fm.Airspeed) / 4000f, 0.3f, 1f);
-            return new FlightInput { Aim = aim, Assist = true, Boost = gap > BoostFrom, Heading = MathF.Atan2(_fm.Forward.Y, _fm.Forward.X) };
+            // No afterburner with the car hooked, the city has to keep up with Batman in it.
+            return new FlightInput { Aim = aim, Assist = true, Boost = gap > BoostFrom && !Carrying, Heading = MathF.Atan2(_fm.Forward.Y, _fm.Forward.X) };
         }
 
-        // Face the target when there is one, otherwise the way it's going, or Batman when it's settled.
+        // Face the target when there is one, otherwise the way it's going, or Batman when it's settled. On a
+        // job it keeps its heading once it's close, so it doesn't spin round over the car.
         float heading = MathF.Atan2(_fm.Forward.Y, _fm.Forward.X);
-        Vector3 face = target != null ? target.Location - at : gap > 1500f ? to : centre - at;
+        Vector3 face = target != null ? target.Location - at : gap > 1500f ? to : job != null ? Vector3.Zero : centre - at;
         if (_pickup && gap < 1500f)
             heading = _pickupYaw;
         else if (face.X * face.X + face.Y * face.Y > 100f)
@@ -805,7 +1020,16 @@ internal sealed partial class Wing
         var fwd = new Vector3(MathF.Cos(heading), MathF.Sin(heading), 0f);
         var side = new Vector3(-fwd.Y, fwd.X, 0f);
         var flatTo = new Vector3(to.X, to.Y, 0f);
-        Vector3 want = flatTo * StationGain + new Vector3(_avoid.X, _avoid.Y, 0f) * AvoidPush;
+
+        // Something in the way on the trip across, so it stops and climbs in place until the way is clear.
+        bool climbOut = _haul == Haul.Cruise && Carrying && _escortBlocked;
+        if (climbOut)
+            flatTo = Vector3.Zero;
+
+        // The drop spot was already checked for wing room, so walls round it only nudge it there.
+        bool straight = _haul is Haul.Climb or Haul.Lower;
+        float shy = straight ? 0.2f : 1f;
+        Vector3 want = flatTo * StationGain + new Vector3(_avoid.X, _avoid.Y, 0f) * (AvoidPush * shy);
         float most = _fm.HoverSpeed * 1.8f;
         if (want.Length() > most)
             want = Vector3.Normalize(want) * most;
@@ -815,7 +1039,9 @@ internal sealed partial class Wing
         {
             Move = new Vector2(Vector3.Dot(want, side) / scale, Vector3.Dot(want, fwd) / scale),
             // Past -1 the hover model just asks for a faster drop, still capped by its own acceleration limit.
-            Lift = Math.Clamp(to.Z / 1500f + _avoid.Z, -2.5f, 1.5f),
+            // Going straight up or down with the car the walls round it don't get a say in its height, and it
+            // comes down faster from high up.
+            Lift = climbOut ? 1.5f : Math.Clamp(to.Z / 1500f + (straight ? 0f : _avoid.Z), _haul == Haul.Lower ? -3.5f : -2.5f, 1.5f),
             Boost = fast,
             Heading = heading,
             Assist = true,
@@ -824,9 +1050,9 @@ internal sealed partial class Wing
 
     // It can wedge itself under something or lose Batman entirely. If it stops closing on its spot for a
     // while, put it back above him.
-    private void Unstick(Vector3 centre, float gap, float dt, bool trailing)
+    private void Unstick(Vector3 centre, float gap, float dt, bool trailing, bool canLose)
     {
-        bool lost = Vector3.DistanceSquared(_fm.Position, centre) > LostFrom * LostFrom;
+        bool lost = canLose && Vector3.DistanceSquared(_fm.Position, centre) > LostFrom * LostFrom;
         // Falling behind something driving away isn't being stuck.
         bool stuck = !trailing && gap > 3000f && gap > _lastGap - 30f * dt;
         _lastGap = gap;
@@ -835,6 +1061,16 @@ internal sealed partial class Wing
             return;
 
         _stuckFor = 0f;
+
+        // Never jumps with the Batmobile hooked. That once dropped Batman over a district that hadn't loaded.
+        // It goes up instead and lets the climb and avoidance work it free.
+        if (Carrying)
+        {
+            _cruiseZ = MathF.Max(_cruiseZ, _fm.Position.Z + 1500f);
+            Log.Info(Title + ": stuck at " + Geo.Position(_fm.Position) + " with the Batmobile hooked, cruise height now " + Fmt.Whole(_cruiseZ / Metre) + ".");
+            return;
+        }
+
         _climb = 0f;
         Vector3 to = new Vector3(centre.X, centre.Y, centre.Z + StationHeight + 2000f);
         if (World.Player is { IsValid: true } p && Ground.Ray(p, centre + new Vector3(0f, 0f, 100f), to, out Vector3 roof, out _))
@@ -853,10 +1089,21 @@ internal sealed partial class Wing
         if (Vector3.DistanceSquared(from, to) < 0.01f)
             return;
 
+        if (Carrying)
+        {
+            bool flat = CargoCollide(from, to, hurts: false);
+            if (_fm.Position != to)
+            {
+                if (!flat)
+                    _climb = MathF.Min(_climb + 2500f, ClimbMost);
+                to = _fm.Position;
+            }
+        }
+
         float body = Math.Clamp(MathF.Min(_half.X, _half.Y) * 0.45f, 150f, 420f);
-        var extent = new Vector3(body, body, _half.Z * 0.8f);
+        var extent = new Vector3(body, body, BoxDepth(_half.Z * 0.8f));
         Actor? hit = craft.Trace(out Vector3 at, out Vector3 n, to, from, Component.ECollisionFilter.COF_TraceWorld, extent, out _, 0);
-        if (hit == null || at == Vector3.Zero || n.LengthSquared() < 0.5f)
+        if (hit == null || at == Vector3.Zero || n.LengthSquared() < 0.5f || IsCargo(hit))
             return;
 
         _fm.Position = at + n * 20f;

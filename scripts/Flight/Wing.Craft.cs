@@ -132,6 +132,7 @@ internal sealed partial class Wing
     private Vector3 _podL = new(-170f, -530f, 50f), _podR = new(-170f, 530f, 50f);
 
     private Vector3 _half = new(700f, 800f, 160f);
+    private float _belly = 96f;
 
     private bool _fitted;
     private int _fitTries;
@@ -482,6 +483,21 @@ internal sealed partial class Wing
             _exhaustTurn = Geo.FromAxes(LocalDir(ex), LocalDir(ey), LocalDir(ez));
         }
 
+        // How far the bottom of the model sits under the middle, along its own up. The car hangs just under it.
+        if (body.SkeletalMesh is { IsValid: true } model)
+        {
+            ref GameObject.FBoxSphereBounds mb = ref model.Bounds;
+            float low = 0f;
+            for (int i = 0; i < 8; i++)
+            {
+                var sign = new Vector3((i & 1) == 0 ? -1f : 1f, (i & 2) == 0 ? -1f : 1f, (i & 4) == 0 ? -1f : 1f);
+                low = MathF.Min(low, Vector3.Dot(mb.Origin + mb.BoxExtent * sign - centre, up));
+            }
+
+            if (float.IsFinite(low))
+                _belly = Math.Clamp(-low, 30f, 400f);
+        }
+
         float span = MathF.Max(MathF.Max(MathF.Abs(_lf.Y), MathF.Abs(_rf.Y)), MathF.Max(MathF.Abs(_lr.Y), MathF.Abs(_rr.Y)));
         if (lw is { } lw2 && rw is { } rw2)
             span = MathF.Max(span, MathF.Max(MathF.Abs(Local(lw2).Y), MathF.Abs(Local(rw2).Y)));
@@ -489,7 +505,7 @@ internal sealed partial class Wing
         _half = new Vector3(Math.Clamp(length * 1.35f, 300f, 1500f), Math.Clamp(span * 1.4f, 300f, 1600f), 160f);
         _fitted = true;
 
-        Log.Info(Title + ": model fitted using " + how + ", hull half size " + Geo.Position(_half) + ", exhaust at " + Geo.Position(_exhaustAt) + ".");
+        Log.Info(Title + ": model fitted using " + how + ", hull half size " + Geo.Position(_half) + ", belly " + Fmt.Whole(_belly) + " under the middle, exhaust at " + Geo.Position(_exhaustAt) + ".");
     }
 
     private Vector3? Point(SkeletalMeshComponent body, FName name)
@@ -529,10 +545,15 @@ internal sealed partial class Wing
         Drifted(ref fwd, ref right, ref up);
         craft.SetLocation(at + _driftAt);
         craft.SetRotation(Geo.FromAxes(fwd, right, up));
+        // Hangs off the model as drawn, so it sways with the hover drift too.
+        HoldCargo(at + _driftAt, fwd, right, up);
     }
 
     private void DropCraft()
     {
+        // Whatever ended it, the Batmobile goes back on the ground rather than being left frozen in the air.
+        if (_cargo != null)
+            DropCargo(Vector3.Zero, gently: true);
         WeaponsOff();
         BoostSound(false);
         StopEngine();
@@ -1350,6 +1371,10 @@ internal sealed partial class Wing
             _fm.HoverWanted = _fm.Hover > 0.5f;
         }
 
+        if (_cargo != null)
+            DropCargo(Vector3.Zero, gently: true);
+        _haul = Haul.None;
+        _liftCar = null;
         FadeVoice();
         _grappleT = -1f;
         _phase = Phase.Leaving;

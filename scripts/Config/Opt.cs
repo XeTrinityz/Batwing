@@ -16,12 +16,17 @@ internal static class Opt
     public static Switch Crashes = null!;
     public static Switch EscortOnBail = null!;
 
+    public static Act LiftCall = null!;
+    public static Switch CatchEject = null!;
+    public static Switch DropDamage = null!;
+
     public static Pick Controls = null!;
     public static Dial AimSpeed = null!;
     public static Bind CallKey = null!;
     public static Bind RemoteKey = null!;
     public static Bind EscortKey = null!;
     public static Bind StrikeKey = null!;
+    public static Bind LiftKey = null!;
     public static Bind DeckKey = null!;
     public static Switch Controller = null!;
     public static Switch PadInvert = null!;
@@ -80,6 +85,17 @@ internal static class Opt
         EscortOnBail = Add(flight, "escort_on_bail", "ESCORT ON BAIL", true,
             "When you bail out the Batwing stays and covers you on escort instead of flying off. Turn off to have it leave.");
 
+        Page batmobile = Add("batmobile", "BATMOBILE", "The Batwing and the Batmobile together.");
+        LiftCall = Act(batmobile, "lift", "LIFT BATMOBILE",
+            "In the Batmobile, the Batwing hooks it and flies you to your map waypoint, or the mission marker if there's no waypoint. Press again to be set down where you are. On foot, it fetches the Batmobile and sets it down where you're looking, or next to you if there's no room there. Press again to mark a new spot. While flying, hover over the Batmobile to hook it and press again to drop it. Same as the lift key.",
+            () => Wing.I.LiftAction());
+        LiftCall.Live = () => Wing.I.LiftLabel;
+        LiftCall.Note = () => Wing.I.LiftNote;
+        CatchEject = Add(batmobile, "catch_eject", "CATCH ON EJECT", false,
+            "On escort, eject from the Batmobile and the Batwing flies under you and picks you up in the air.");
+        DropDamage = Add(batmobile, "drop_damage", "DROP DAMAGE", true,
+            "Drop the Batmobile from high up and it wrecks vehicles and knocks down thugs where it lands.");
+
         Page controls = Add("controls", "CONTROLS", "Keybinds and controller.");
         Controls = Add(controls, "controls", "CONTROL MODE", new[] { "aim", "direct" }, new[] { "MOUSE AIM", "DIRECT" },
             "MOUSE AIM flies the Batwing towards where you look, A and D roll. DIRECT uses the mouse or right stick for pitch and roll, A and D for rudder.");
@@ -93,10 +109,12 @@ internal static class Opt
             "Key to bring in or dismiss the escort. Press ENTER, then the new key.");
         StrikeKey = Add(controls, "strike_key", "STRIKE KEY", Keys.T,
             "On escort, look at a thug or vehicle and press this to have the Batwing take it down. Hold it and sweep across targets to mark up to 6, and it takes them in order. Press ENTER, then the new key.");
+        LiftKey = Add(controls, "lift_key", "LIFT KEY", Keys.O,
+            "Key to lift or fetch the Batmobile, or to hook and drop it while flying. Press ENTER, then the new key.");
         DeckKey = Add(controls, "deck_key", "DECK KEY", Keys.F4,
             "Key to open and close the deck. Press ENTER, then the new key.");
         Controller = Add(controls, "controller", "CONTROLLER", true,
-            "Xbox controller support. RS steers, LS throttle and roll, RT afterburner, LT brake, Y hover, B bail out or end remote, LB free look, D-pad up camera, X guns, RB cannon, A missiles. Start remote control and escort from the deck.");
+            "Xbox controller support. RS steers, LS throttle and roll, RT afterburner, LT brake, Y hover, B bail out or end remote, LB free look, D-pad up camera, D-pad down hook or drop the Batmobile, X guns, RB cannon, A missiles. Start remote control, escort and lifts from the deck.");
         PadInvert = Add(controls, "pad_invert", "INVERT PAD PITCH", false,
             "Pull the right stick back to climb, like a flight stick. Off means push up to climb.");
         PadButton = Add(controls, "pad_button", "PAD DECK BUTTON", new[] { "lb+rb", "ls+rs", "off" }, new[] { "HOLD LB + RB", "HOLD LS + RS", "OFF" },

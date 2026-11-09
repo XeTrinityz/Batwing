@@ -645,7 +645,8 @@ internal sealed partial class Wing
         return bones.Count > 0 ? bones[Random.Shared.Next(bones.Count)] : Spine;
     }
 
-    private static bool CanStrike(RPawnVillain thug) => !thug.bHidden && Alive(thug);
+    // Alive goes first, it checks the thug still exists before anything reads from it.
+    private static bool CanStrike(RPawnVillain thug) => Alive(thug) && !thug.bHidden;
 
     // A hostile thug still up, seen or not.
     private static bool Alive(RPawnVillain thug) =>

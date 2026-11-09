@@ -41,6 +41,7 @@ internal sealed partial class Wing
 
     public bool View(R3rdPersonCamera cam, PlayerController pc, in Pov game, ref Pov pov, float dt)
     {
+        _viewAt = Clock.Now;
         if (_phase == Phase.Off && _blendOut <= 0f && _voice == null)
         {
             _haveLast = false;
