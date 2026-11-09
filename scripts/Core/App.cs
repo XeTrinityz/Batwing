@@ -4,7 +4,7 @@ namespace Trinity.Batwing;
 
 internal static class App
 {
-    public const string Version = "1.4.0";
+    public const string Version = "1.4.1";
     private const float MaxStep = 0.25f;
 
     private static FrameTimer _tick;
