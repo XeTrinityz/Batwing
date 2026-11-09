@@ -57,7 +57,7 @@ internal sealed partial class Wing
         Phase.Arriving => "INBOUND",
         Phase.Flying => _remote ? (_remoteFar ? "REMOTE // WEAK SIGNAL" : "REMOTE") : _landed ? "LANDED" : _bailWait >= 0f ? "WAITING FOR GROUND" : Carrying ? "CARRYING BATMOBILE" : _fm.Boosting ? "AFTERBURNER" : _fm.Hover > 0.5f ? "HOVER" : "WINGS",
         Phase.Leaving => "DEPARTING",
-        Phase.Escort => Hauling ? (_delivery ? "DELIVERY // " : "LIFT // ") + HaulState() : Catching ? "ESCORT // CATCHING" : _pickup ? "ESCORT // PICKUP" : _strike != null ? (_strike is RPawnVillain ? "ESCORT // STRIKING" : "ESCORT // CHASING") : EscortTarget() != null ? "ESCORT // ENGAGING" : "ESCORT",
+        Phase.Escort => Hauling ? (_delivery ? "DELIVERY // " : "LIFT // ") + HaulState() : Catching ? "ESCORT // CATCHING" : _pickup ? "ESCORT // PICKUP" : _strike != null ? (Chasing(_strike) ? "ESCORT // CHASING" : "ESCORT // STRIKING") : EscortTarget() != null ? "ESCORT // ENGAGING" : "ESCORT",
         _ => World.InGame ? "STANDBY" : "NO WORLD",
     };
 

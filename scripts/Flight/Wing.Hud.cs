@@ -106,7 +106,7 @@ internal sealed partial class Wing
         else
         {
             Spaced(x + U(16), y + U(7), "BATWING ESCORT", Palette.Hud, Sc(0.56f), 2f);
-            string state = Catching ? "CATCHING" : _pickup ? "PICKUP" : _strike != null ? (_strike is RPawnVillain ? "STRIKING" : "CHASING") : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
+            string state = Catching ? "CATCHING" : _pickup ? "PICKUP" : _strike != null ? (Chasing(_strike) ? "CHASING" : "STRIKING") : EscortTarget() != null ? "ENGAGING" : "ON WATCH";
             TextRight(x + w - U(16), y + U(16), state, _strike != null ? Palette.CautionNow : Palette.Text, Sc(0.5f));
             string keys = World.Pawn is RVehicleBatmobileBase
                 ? "LIFT: " + Opt.LiftKey.Value + "  DISMISS: " + Opt.EscortKey.Value
@@ -144,7 +144,7 @@ internal sealed partial class Wing
         if ((_strike == null || _marking) && _strikeAim is { IsValid: true } aim && !_marks.Exists(m => m.Ptr == aim.Ptr))
         {
             Brackets(aim.Location, U(aim is RPawnVillain ? 10f : 16f), Palette.Dim, t);
-            string what = aim is RPawnVillain ? "" : Apc(aim) ? " APC" : " VEHICLE";
+            string what = aim is RPawnVillain ? "" : Turret(aim) ? " TURRET" : HeavyTank(aim) ? " HEAVY TANK" : Apc(aim) ? " APC" : " VEHICLE";
             if (WorldView.ToScreen(aim.Location, out Vector2 p))
                 TextMid(p.X + U(aim is RPawnVillain ? 16f : 22f), p.Y, Opt.StrikeKey.Value + what, Palette.Dim, Sc(0.4f));
         }

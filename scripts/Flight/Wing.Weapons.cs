@@ -161,6 +161,7 @@ internal sealed partial class Wing
         _free = orders.Free;
         _ordered = orders.Target;
         Aim(craft, orders.Target);
+        MissilesLand();
 
         bool gun = orders.Gun;
         bool cannon = orders.Cannon;
@@ -207,7 +208,7 @@ internal sealed partial class Wing
         _aimFoe = null;
 
         // An ordered target skips the cone search, as long as it's still fair game and in sight.
-        if (ordered is { IsValid: true } && Strikeable(ordered) && craft.FastTrace(ordered.Location, nose, Vector3.Zero, false))
+        if (ordered is { IsValid: true } && Strikeable(ordered) && Sees(craft, nose, ordered))
         {
             _aimFoe = ordered;
             _aimPoint = AimAt(ordered);
@@ -224,7 +225,7 @@ internal sealed partial class Wing
             if (dist < 1f || dist > GunRange)
                 continue;
             float dot = Vector3.Dot(to / dist, dir);
-            if (dot > best && craft.FastTrace(foe.Location, nose, Vector3.Zero, false))
+            if (dot > best && Sees(craft, nose, foe))
             {
                 best = dot;
                 _aimFoe = foe;
@@ -313,9 +314,17 @@ internal sealed partial class Wing
 
     private static bool Strikeable(Actor a) => a is RPawnVillain thug ? CanStrike(thug) : Foe(a);
 
-    private static bool Apc(Actor? a) => a is RVehicle v && (v.bHasAPCStyleWeakSpot || v is RVehicleNPC { IsMostWantedApc: true });
+    // The game flags plain militia cars with an APC style weak spot too, but theirs is the EMP rocket kind. A
+    // real APC's weak spots are its wheel arches.
+    private static bool Apc(Actor? a) => a switch
+    {
+        RVehicleNPC { IsMostWantedApc: true } => true,
+        RVehicleCar car => car.bHasAPCStyleWeakSpot && car.CurrentWeakSpot != RVehicleCar.EAPCWeakSpot.EAWS_EMPRocket,
+        RVehicle v => v.bHasAPCStyleWeakSpot,
+        _ => false,
+    };
 
-    private Vector3 AimAt(Actor a) => WeakSpot(a) ?? a.Location;
+    private Vector3 AimAt(Actor a) => WeakSpot(a) ?? TankWeakSpot(a) ?? a.Location;
 
     // An APC only takes damage on its current weak spot, which the game moves around. There's no position for
     // it to read, so the APC is asked which points round its hull count as a hit, and the middle of those is
@@ -446,6 +455,31 @@ internal sealed partial class Wing
             if (Foe(h) && Vector3.DistanceSquared(h.Location, at) < reach)
                 _foes.Add(h);
         }
+
+        // Car.Wreckable leaves heavy tanks and the fixed drone turrets out of the vehicle list above.
+        foreach (RVehicleHeavyTank t in World.All<RVehicleHeavyTank>())
+        {
+            if (Foe(t) && Vector3.DistanceSquared(t.Location, at) < reach)
+                _foes.Add(t);
+        }
+
+        foreach (RVehicleStaticTank t in World.All<RVehicleStaticTank>())
+        {
+            if (Foe(t) && Vector3.DistanceSquared(t.Location, at) < reach)
+                _foes.Add(t);
+        }
+
+        foreach (RSentryGunBase s in World.All<RSentryGunBase>())
+        {
+            if (Foe(s) && Vector3.DistanceSquared(s.Location, at) < reach)
+                _foes.Add(s);
+        }
+
+        foreach (RTurretBase g in World.All<RTurretBase>())
+        {
+            if (Foe(g) && Vector3.DistanceSquared(g.Location, at) < reach)
+                _foes.Add(g);
+        }
     }
 
     private bool _free = true;
@@ -454,13 +488,163 @@ internal sealed partial class Wing
     // Manned vehicles and APCs only get hit on a strike order when it isn't free to pick its own targets.
     private bool Held(Actor foe) => !_free && OrderOnly(foe) && (_ordered == null || foe.Ptr != _ordered.Ptr);
 
-    private static bool OrderOnly(Actor foe) => Apc(foe) || (foe is RVehicleNPC v && Manned.Contains(v.Ptr));
+    // Militia cars, APCs among them, only on a strike, as do vehicles with a thug aboard. Drone tanks are their
+    // own class and stay fair game.
+    private static bool OrderOnly(Actor foe) => foe is RVehicleCar || Apc(foe) || Tough(foe) || (foe is RVehicleNPC v && Manned.Contains(v.Ptr));
 
     // Vehicles with a thug aboard, from the last foe scan. Those are fair game whatever the game calls them.
     private static readonly HashSet<nint> Manned = new();
 
+    private const float TurretSplash = 300f;
+    private const int TurretRounds = 30;
+
+    private readonly Dictionary<nint, int> _turretHits = new();
+
+    // Sentry guns the militia set up, security turrets, and the fixed drone turrets out in the city.
+    private static bool Turret(Actor? a) => a is RSentryGunBase or RTurretBase or RVehicleStaticTank;
+
+    // Turrets that were finished off. Some don't show it in any flag the strike can read, so it would keep
+    // going at them.
+    private static readonly HashSet<nint> TakenOut = new();
+
+    // A watchtower that was taken out keeps every turret flag as it was. Its gun is hidden, or the state it's
+    // in says so. "Off" alone isn't trusted, a live one may switch off when Batman is far away.
+    private static bool WatchtowerOut(RTurretBase t)
+    {
+        if (t is not RTurret_WatchtowerBase tower)
+            return false;
+        if (tower.unifiedGunMesh is { IsValid: true } gun && gun.HiddenGame)
+            return true;
+
+        string state = tower.GetStateName().ToString() ?? "";
+        return state.Contains("Destroy", StringComparison.OrdinalIgnoreCase) || state.Contains("Dead", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("TakenOut", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly HashSet<nint> TowersLogged = new();
+
+    // What a watchtower looks like to the strike, once each, so a destroyed one can be told from a live one.
+    private static void WatchtowerLog(Actor a)
+    {
+        if (a is not RTurret_WatchtowerBase tower || !TowersLogged.Add(tower.Ptr))
+            return;
+
+        bool active = Safe.Try("watchtower active", tower.IsActive);
+        Log.Info(Title + ": watchtower " + tower.Name + " state " + tower.GetStateName() + ", disabled " + tower.bDisabled + ", active " + active
+            + ", hidden " + tower.bHidden + ", gun hidden " + (tower.unifiedGunMesh is { IsValid: true } g ? g.HiddenGame.ToString() : "no gun")
+            + ", lights " + (tower.lightsInstance is { IsValid: true } l ? (l.bHidden ? "hidden" : "on") : "none") + ", can hurt Batman " + tower.bCanDamagePlayer
+            + ", shooting " + tower.bIsShooting + ", taken out by a strike " + TakenOut.Contains(tower.Ptr) + ".");
+    }
+
+    // Finished off by a strike or switched off by the game. A turret doesn't drive away, so that's a kill.
+    private static bool TurretDown(Actor a) =>
+        TakenOut.Contains(a.Ptr) || a is RSentryGunBase { bDisabled: true } || a is RTurretBase { bDisabled: true };
+
+    private static bool TurretUp(Actor a) => !TakenOut.Contains(a.Ptr) && a switch
+    {
+        RSentryGunBase s => s is { IsValid: true, bDeleteMe: false, bHidden: false, bDisabled: false },
+        RTurretBase t => t is { IsValid: true, bDeleteMe: false, bHidden: false, bDisabled: false } && !WatchtowerOut(t),
+        RVehicleStaticTank v => v is { IsValid: true, bDeleteMe: false, bHidden: false, DroneHacked: false } && v.Health > 0,
+        _ => false,
+    };
+
+    // The guns may not be enough on their own for these, so a turret that has soaked up a full burst is
+    // finished off the game's own way.
+    private const int TankRounds = 60;
+
+    // Plain heavy tanks. Commander tanks have several weak points and boss stages, those are story fights and
+    // stay out of it.
+    private static bool HeavyTank(Actor? a) => a is RVehicleHeavyTank { IsValid: true } t && t.WeakPoints.Count == 0 && t.BossStages.Count == 0;
+
+    private static bool TankUp(RVehicleHeavyTank t) =>
+        !TakenOut.Contains(t.Ptr) && t is { IsValid: true, bDeleteMe: false, bHidden: false, DroneHacked: false } && t.Health > 0;
+
+    private static Vector3? TankWeakSpot(Actor a) =>
+        a is RVehicleHeavyTank t && t.WeakPoint is { IsValid: true } wp ? wp.Bounds.Origin : null;
+
+    // The Batmobile heavy cannon's shell damage, the nearest thing to what a hacked tank hits other tanks with.
+    private static Class? ShellDamage() =>
+        Car.Weapon<RBatmobileHeavyCannon>()?.ProjectileArchetype is { IsValid: true } shell && shell.MyDamageType is { IsValid: true } type ? type : null;
+
+    // Things the guns barely scratch and that get finished off after enough hits.
+    private static bool Tough(Actor? a) => Turret(a) || HeavyTank(a);
+
+    private static bool ToughUp(Actor a) => a is RVehicleHeavyTank t ? TankUp(t) : TurretUp(a);
+
+    // Hacked heavy tanks kill each other, so they take damage when it's the right kind. It's put on the rear
+    // weak spot as heavy cannon damage, whichever side the round came in from.
+    private void TankHurt(RVehicleHeavyTank tank, int damage, Vector3 dir, PlayerController? pc, RPawnPlayer pawn, Class fallback)
+    {
+        Vector3 weak = TankWeakSpot(tank) ?? tank.Location;
+        Class type = ShellDamage() is { } heavy ? heavy : fallback;
+        int was = tank.Health;
+        tank.TakeDamageFromWeapon(damage, pc!, weak, -dir, dir * 800f, type, default, pawn, false);
+        if (!_turretHits.ContainsKey(tank.Ptr))
+            Log.Info(Title + ": first hit on heavy tank " + tank.Name + ", health " + was + " to " + tank.Health + ", shielded " + tank.Shielded + ", damage type " + type.Name + ".");
+        ToughHit(tank);
+    }
+
+    private void ToughHit(Actor turret, int rounds = 1)
+    {
+        int hits = (_turretHits.TryGetValue(turret.Ptr, out int n) ? n : 0) + rounds;
+        if (_turretHits.Count > 16)
+            _turretHits.Clear();
+        _turretHits[turret.Ptr] = hits;
+        if (hits < (turret is RVehicleHeavyTank ? TankRounds : TurretRounds) || !ToughUp(turret))
+            return;
+
+        _turretHits.Remove(turret.Ptr);
+        switch (turret)
+        {
+            case RVehicleHeavyTank tank:
+                FinishTank(tank);
+                return;
+            case RSentryGunBase sentry:
+                sentry.Explode(true);
+                break;
+            // Watchtowers have a shield that stops every shot. The game takes them out with this once Batman
+            // has dealt with one, and it counts towards the district's watchtowers too.
+            case BmSDK.BmScript.RTurret_Watchtower tower:
+                tower.WatchtowerTakenOut(false);
+                break;
+            case RTurretBase gun:
+                gun.SetDamaged();
+                break;
+        }
+
+        bool still = TurretUp(turret);
+        if (TakenOut.Count > 64)
+            TakenOut.Clear();
+        TakenOut.Add(turret.Ptr);
+        Log.Info(Title + ": " + turret.Name + " took " + hits + " rounds and was still up, finished it off" + (still ? ", its flags still say it's up." : "."));
+    }
+
+    // Shield off and a killing hit on the weak spot. Died only if even that didn't do it.
+    private static void FinishTank(RVehicleHeavyTank tank)
+    {
+        int was = tank.Health;
+        Vector3 weak = TankWeakSpot(tank) ?? tank.Location;
+        Class type = ShellDamage() is { } heavy ? heavy : RDmgType_BatmobileChainGun.StaticClass();
+        PlayerController? pc = World.Pc;
+        Safe.Run("heavy tank shield", tank.DisableShield);
+        Safe.Run("heavy tank finish", () => tank.TakeDamageFromWeapon(tank.Health + 1, pc!, weak, Vector3.UnitZ, Vector3.Zero, type, default, World.Player!, false));
+        bool died = false;
+        if (tank.IsValid && tank.Health > 0)
+        {
+            Safe.Run("heavy tank died", () => tank.Died(pc!, type, weak));
+            died = true;
+        }
+
+        if (TakenOut.Count > 64)
+            TakenOut.Clear();
+        TakenOut.Add(tank.Ptr);
+        Log.Info(Title + ": heavy tank " + tank.Name + " still up after the barrage, health " + was + ", finished it off" + (died ? " with Died." : " with a hit on the weak spot."));
+    }
+
     private static bool Foe(Actor? a) => a switch
     {
+        Actor t when Turret(t) => TurretUp(t),
+        RVehicleHeavyTank ht when HeavyTank(ht) => TankUp(ht),
         RVehicleNPC v => Car.Hostile(v) || (Manned.Contains(v.Ptr) && Car.Wreckable(v)),
         RHelicopterBase h => h is { IsValid: true, bDeleteMe: false, bHidden: false, IsFriendly: false, bFriendly: false },
         _ => false,
@@ -562,6 +746,12 @@ internal sealed partial class Wing
         if (hit == null || at == Vector3.Zero)
             return;
 
+        // A turret is a small target, so rounds landing right by the one being aimed at count as hitting it. On a
+        // strike that's the ordered one, flying it yourself it's whatever the aim has settled on.
+        Actor? aimed = _ordered is { IsValid: true } o && Turret(o) ? o : _aimFoe is { IsValid: true } f && Turret(f) ? f : null;
+        if (aimed != null && hit.Ptr != aimed.Ptr && Vector3.Distance(at, aimed.Location) < TurretSplash)
+            hit = aimed;
+
         int damage = Math.Max(vulcan.ChainGunDamage, 1);
         Safe.Run("batwing gun hit", () => Strike(hit, at, dir, damage, pawn, vulcan));
     }
@@ -609,6 +799,17 @@ internal sealed partial class Wing
             case RTankMissile missile when !missile.bDeleteMe && !missile.WasShotOutOfSky:
                 missile.TakeDamageFromWeapon(1000, pc!, at, Vector3.UnitZ, Vector3.Zero, damageType, default, pawn, false);
                 break;
+            case RSentryGunBase sentry when Foe(sentry):
+                sentry.TakeDamageFromWeapon(damage, pc!, at, -dir, dir * 800f, damageType, default, pawn, false);
+                ToughHit(sentry);
+                break;
+            case RTurretBase turret when Foe(turret):
+                turret.TakeDamage(damage, pc!, at, dir * 800f, damageType, default, pawn);
+                ToughHit(turret);
+                break;
+            case RVehicleHeavyTank tank when HeavyTank(tank) && Foe(tank):
+                TankHurt(tank, damage, dir, pc, pawn, damageType);
+                break;
             case RVehicleNPC vehicle when Foe(vehicle):
                 vehicle.TakeDamageFromWeapon(damage, pc!, HitPoint(vehicle, at), dir * 800f, Vector3.Zero, damageType, default, pawn, false);
                 break;
@@ -652,7 +853,8 @@ internal sealed partial class Wing
     private static bool Alive(RPawnVillain thug) =>
         thug is { IsValid: true, bDeleteMe: false, bGoodAsDead: false } && thug.Health > 0 && thug.CombatPawnType switch
         {
-            RPawnCombat.ECombatPawnType.ECPT_MultiStage or RPawnCombat.ECombatPawnType.ECPT_Robot or RPawnCombat.ECombatPawnType.ECPT_RiddlerMechSuit
+            // Brutes are MultiStage and count. Robots and the Riddler mech don't.
+            RPawnCombat.ECombatPawnType.ECPT_Robot or RPawnCombat.ECombatPawnType.ECPT_RiddlerMechSuit
                 or RPawnCombat.ECombatPawnType.ECPT_Player or RPawnCombat.ECombatPawnType.ECPT_Friendly => false,
             _ => true,
         };
@@ -824,7 +1026,10 @@ internal sealed partial class Wing
             if (dist < 1f || dist > LockRange)
                 continue;
             float dot = Vector3.Dot(to / dist, dir);
-            if (dot <= bestDot || !craft.FastTrace(foe.Location, from + dir * (_half.X + 100f), Vector3.Zero, false))
+            if (dot <= bestDot)
+                continue;
+
+            if (!Sees(craft, from + dir * (_half.X + 100f), foe))
                 continue;
 
             bestDot = dot;
@@ -834,10 +1039,37 @@ internal sealed partial class Wing
         return best;
     }
 
+    // A turret's middle is inside the tower it's on, so a line that stops right by it still counts as seeing it.
+    private static bool Sees(RBatwing craft, Vector3 from, Actor target) =>
+        Turret(target) ? InView(craft, from, target.Location, TurretSlack) : craft.FastTrace(target.Location, from, Vector3.Zero, false);
+
+    private const float MissileSpeedGuess = 5000f;
+    private const int MissileRounds = 12;
+
+    private readonly List<(Actor Turret, double Due)> _missilesInbound = new();
+
+    // Shields stop the real missile, so each one aimed at a turret counts as a burst of rounds when it gets there.
+    private void MissilesLand()
+    {
+        double now = Clock.Now;
+        for (int i = _missilesInbound.Count - 1; i >= 0; i--)
+        {
+            (Actor turret, double due) = _missilesInbound[i];
+            if (now < due)
+                continue;
+            _missilesInbound.RemoveAt(i);
+            if (turret.IsValid && ToughUp(turret))
+                ToughHit(turret, MissileRounds);
+        }
+    }
+
     private void Missile(RBatmobileMissileLauncher launcher, Actor target)
     {
         if (launcher.MissileClass is not { IsValid: true } missile)
             return;
+
+        if (Tough(target) && _missilesInbound.Count < 32)
+            _missilesInbound.Add((target, Clock.Now + 0.3 + Vector3.Distance(_fm.Position, target.Location) / MissileSpeedGuess));
 
         _missileSide = _missileSide >= 0 ? -1 : 1;
         Vector3 from = WorldPoint(_fm.Position, (_missileSide < 0 ? _podL : _podR) + new Vector3(PodAhead, 0f, PodBelow));

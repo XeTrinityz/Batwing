@@ -108,7 +108,7 @@ internal static class Opt
         EscortKey = Add(controls, "escort_key", "ESCORT KEY", Keys.I,
             "Key to bring in or dismiss the escort. Press ENTER, then the new key.");
         StrikeKey = Add(controls, "strike_key", "STRIKE KEY", Keys.T,
-            "On escort, look at a thug or vehicle and press this to have the Batwing take it down. Hold it and sweep across targets to mark up to 6, and it takes them in order. Press ENTER, then the new key.");
+            "On escort, look at a thug, vehicle, turret or heavy tank and press this to have the Batwing take it down. Hold it and sweep across targets to mark up to 6, and it takes them in order. Press ENTER, then the new key.");
         LiftKey = Add(controls, "lift_key", "LIFT KEY", Keys.O,
             "Key to lift or fetch the Batmobile, or to hook and drop it while flying. Press ENTER, then the new key.");
         DeckKey = Add(controls, "deck_key", "DECK KEY", Keys.F4,

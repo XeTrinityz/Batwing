@@ -368,7 +368,7 @@ internal sealed partial class Wing
         Actor first = _marks[0];
         int count = _marks.Count;
         _marks.Clear();
-        Toast(count > 1 ? "STRIKE // " + count + " TARGETS" : first is RPawnVillain ? "STRIKE" : Apc(first) ? "STRIKE ON APC" : "STRIKE ON VEHICLE");
+        Toast(count > 1 ? "STRIKE // " + count + " TARGETS" : first is RPawnVillain ? "STRIKE" : Turret(first) ? "STRIKE ON TURRET" : HeavyTank(first) ? "STRIKE ON HEAVY TANK" : Apc(first) ? "STRIKE ON APC" : "STRIKE ON VEHICLE");
         if (count > 1)
             Log.Info(Title + ": strike ordered on " + count + " targets.");
         BeginStrike(first);
@@ -446,7 +446,8 @@ internal sealed partial class Wing
         return best;
     }
 
-    // Says what the vehicle nearest the middle of the screen looks like to the strike, so a miss can be traced.
+    // Says what the enemy and the vehicle nearest the middle of the screen look like to the strike, so a miss
+    // can be traced.
     private void NoTargetLog()
     {
         if (Hooks.PlayerCam() is not { } cam)
@@ -454,6 +455,25 @@ internal sealed partial class Wing
 
         Vector3 eye = cam.CameraCache.POV.Location;
         Vector3 look = Geo.Dir(cam.CameraCache.POV.Rotation.Yaw, cam.CameraCache.POV.Rotation.Pitch);
+
+        RPawnVillain? enemy = null;
+        float enemyDot = 0.9f;
+        foreach (RPawnVillain t in World.All<RPawnVillain>())
+        {
+            if (t is { IsValid: true, bDeleteMe: false } && Ahead(eye, look, t.Location, enemyDot, out float dot))
+            {
+                enemyDot = dot;
+                enemy = t;
+            }
+        }
+
+        if (enemy != null && World.Player is { } me)
+        {
+            Log.Info(Title + ": strike skipped " + enemy.Name + " (" + enemy.Class.Name + ", " + enemy.CombatPawnType + "), health " + enemy.Health
+                + ", alive " + Alive(enemy) + ", hidden " + enemy.bHidden + ", tick off " + enemy.bTickIsDisabled + ", in view " + InView(me, eye, enemy.Location, 0f)
+                + ", " + Fmt.Whole(Vector3.Distance(eye, enemy.Location) / Metre) + " m.");
+        }
+
         RVehicleNPC? best = null;
         float bestDot = 0.9f;
         foreach (RVehicleNPC v in World.All<RVehicleNPC>())
@@ -498,7 +518,8 @@ internal sealed partial class Wing
     private static bool InView(Actor me, Vector3 eye, Vector3 at, float slack) =>
         !Ground.Ray(me, eye, at, out Vector3 hit, out _) || (slack > 0f && Vector3.Distance(eye, hit) > Vector3.Distance(eye, at) - slack);
 
-    private bool Chasing(Actor? target) => target != null && _strike != null && target.Ptr == _strike.Ptr && target is not RPawnVillain;
+    // Only something that drives off is chased. A turret stays put, so it gets a firing spot like a thug.
+    private bool Chasing(Actor? target) => target != null && _strike != null && target.Ptr == _strike.Ptr && target is not RPawnVillain && !Turret(target);
 
     // Where to watch a target from. A chased vehicle is led a little so the Batwing keeps up.
     private Vector3 Watched(Actor target) => Chasing(target) ? target.Location + target.Velocity * ChaseLead : target.Location;
@@ -560,7 +581,12 @@ internal sealed partial class Wing
             if (_escortPick.Elapsed(0.5))
                 Safe.Run("batwing escort targets", () => PickFoe(craft, centre));
             if (_strikeLook.Elapsed(0.1))
+            {
                 _strikeAim = lead is RPawnPlayer ? StrikeCandidate(centre) : null;
+                if (_strikeAim != null)
+                    WatchtowerLog(_strikeAim);
+            }
+
             Marking();
             StrikeCheck(centre);
         }
@@ -657,7 +683,7 @@ internal sealed partial class Wing
 
         if (!_strike.IsValid || !Strikeable(_strike))
         {
-            bool down = !_strike.IsValid || _strike.bDeleteMe || _strike is Pawn { Health: <= 0 } || _strike is RPawnVillain;
+            bool down = !_strike.IsValid || _strike.bDeleteMe || _strike is Pawn { Health: <= 0 } || _strike is RPawnVillain || TurretDown(_strike);
             Log.Info(Title + ": strike target " + (down ? "down." : "lost."));
             EndStrike(down ? "TARGET DOWN" : "TARGET LOST");
             return;
@@ -674,7 +700,7 @@ internal sealed partial class Wing
 
             // A vehicle is chased as long as it stays in sight. An APC gets longer to come back into view.
             if (_targetSeen)
-                _strikeUntil = Math.Max(_strikeUntil, Clock.Now + (Apc(_strike) ? ApcPatience : StrikeSeconds));
+                _strikeUntil = Math.Max(_strikeUntil, Clock.Now + (Apc(_strike) || HeavyTank(_strike) ? ApcPatience : StrikeSeconds));
         }
 
         if (Clock.Now > _strikeUntil)
@@ -742,9 +768,10 @@ internal sealed partial class Wing
         {
             if (target != null)
             {
-                // A road spot is fixed, so it's no use for something driving away.
+                // A road spot is fixed, so it's no use for something driving away. A turret up on a tower is
+                // better from a spot level with it out to the side than from over the street below it.
                 Vector3? found = null;
-                if (target is not RHelicopterBase && !Chasing(target))
+                if (target is not RHelicopterBase && !Chasing(target) && !Turret(target))
                     Safe.Run("batwing road spot", () => found = RoadSpot(craft, centre, target));
                 _roadSpot = found;
                 if (found == null)
@@ -776,7 +803,7 @@ internal sealed partial class Wing
                 continue;
 
             Vector3 spot = road + new Vector3(0f, 0f, RoadHeight);
-            if (FlatDistance(spot, centre) > EngageRange + Standoff || !SpotClear(craft, spot, t, RoadRoom))
+            if (FlatDistance(spot, centre) > EngageRange + Standoff || !SpotClear(craft, spot, t, RoadRoom, Turret(target) ? TurretSlack : 0f))
                 continue;
 
             float d = Vector3.DistanceSquared(spot, _fm.Position);
@@ -834,7 +861,7 @@ internal sealed partial class Wing
                 {
                     float step = (i + 1) / 2 * SpotStep * (i % 2 == 1 ? 1f : -1f);
                     float a = angle + step;
-                    if (!SpotClear(craft, SpotFor(centre, target, a, raise), pass == 0 ? watch : null, SpotRoom))
+                    if (!SpotClear(craft, SpotFor(centre, target, a, raise), pass == 0 ? watch : null, SpotRoom, target != null && Turret(target) ? TurretSlack : 0f))
                         continue;
 
                     if (raise != _raise)
@@ -851,9 +878,12 @@ internal sealed partial class Wing
 
     // A clear line to whoever it watches, nothing through the spot itself, and room round it for the wings.
     // The box catches thin beams and girders that slip between the rays.
-    private bool SpotClear(RBatwing craft, Vector3 spot, Vector3? watch, float spare)
+    // A turret sits on or in the tower it's mounted on, so a line that only stops right by it still counts.
+    private const float TurretSlack = 500f;
+
+    private bool SpotClear(RBatwing craft, Vector3 spot, Vector3? watch, float spare, float slack = 0f)
     {
-        if (watch is { } w && Ground.Ray(craft, w, spot, out _, out _))
+        if (watch is { } w && Ground.Ray(craft, spot, w, out Vector3 block, out _) && Vector3.Distance(block, w) > slack)
             return false;
         if (Swept(craft, spot + new Vector3(0f, 0f, 300f), spot - new Vector3(0f, 0f, 300f)))
             return false;
@@ -1130,7 +1160,8 @@ internal sealed partial class Wing
         // Hovering it only turns flat, so "in front" means facing it, whatever the height difference.
         Vector3 dir = to / dist;
         float front = Vector3.Dot(Flat(dir), Flat(_fm.Forward));
-        _targetSeen = _craft is { IsValid: true } craft && craft.FastTrace(target.Location, _fm.Position + dir * (_half.X + 100f), Vector3.Zero, false);
+        Vector3 nose = _fm.Position + dir * (_half.X + 100f);
+        _targetSeen = _craft is { IsValid: true } craft && Sees(craft, nose, target);
         orders.Look = dir;
         orders.Target = target;
         orders.Gun = _targetSeen && front > GunFront && dist < GunRange * 0.5f;
@@ -1140,9 +1171,10 @@ internal sealed partial class Wing
             return orders;
 
         // Guns don't bring down anything flying, so those get the cannon more often and missiles even alone.
-        // So does a vehicle Batman ordered a strike on, with the whole barrage on it.
+        // So does a vehicle Batman ordered a strike on, with the whole barrage on it, and a struck turret, which
+        // mostly falls to the guns but gets the full show anyway.
         bool flying = target is RVehicleFlying or RHelicopterBase;
-        bool ordered = Chasing(target);
+        bool ordered = Chasing(target) || Turret(target);
         bool heavy = flying || ordered;
         double now = Clock.Now;
         if (front > 0.9f && now >= _nextCannon && Car.Weapon<RBatmobileHeavyCannon>()?.ProjectileArchetype is { IsValid: true })
