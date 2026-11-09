@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using BmSDK.Framework;
 
 namespace Trinity.Batwing;
 
@@ -6,31 +6,18 @@ internal static unsafe class ObjectTable
 {
     public const int Capacity = 785000;
 
-    private const nint SlotsUsed = 0x3A09F28;
-    private const nint FreeCount = 0x3A09F70;
+    private static int _alive = -1;
+    private static Every _count;
 
-    private static nint _base;
-
-    private static nint Base => _base != 0 ? _base : _base = Process.GetCurrentProcess().MainModule?.BaseAddress ?? 0;
-
+    // The SDK knows where the object list lives on Steam and on Epic. It holds Capacity slots inline
+    // with the used count right after them, and a freed slot is left empty.
     public static int Alive
     {
         get
         {
-            try
-            {
-                if (Base == 0)
-                    return -1;
-                int used = *(int*)(Base + SlotsUsed);
-                int free = *(int*)(Base + FreeCount);
-                if (used <= 0 || used > Capacity || free < 0 || free > used)
-                    return -1;
-                return used - free;
-            }
-            catch
-            {
-                return -1;
-            }
+            if (_count.Elapsed(1.0))
+                _alive = Count();
+            return _alive;
         }
     }
 
@@ -39,4 +26,28 @@ internal static unsafe class ObjectTable
     public static string Describe() => Alive is var alive and >= 0
         ? alive.ToString("N0") + " of " + Capacity.ToString("N0") + " objects"
         : "object count unknown";
+
+    private static int Count()
+    {
+        try
+        {
+            ulong* slots = (ulong*)MemUtil.GetIntPointer(GameDefine.Current.GObjObjects);
+            int used = *(int*)((byte*)slots + Capacity * 8L + 4);
+            if (used <= 0 || used > Capacity)
+                return -1;
+
+            int alive = 0;
+            for (int i = 0; i < used; i++)
+            {
+                if (slots[i] != 0)
+                    alive++;
+            }
+
+            return alive;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
 }
