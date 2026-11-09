@@ -74,10 +74,11 @@ updating the mod doesn't reset them.
 
 ## Install
 
-1. Install [BmSDK-AK](https://github.com/Team-BmSDK/BmSDK-AK) v0.21.0, then replace its
-   `Binaries/Win64/sdk/BmSDK.dll` with the one from the
-   [latest release of XeTrinityz/BmSDK-AK](https://github.com/XeTrinityz/BmSDK-AK/releases/latest). Batwing needs
-   that fork's fixes and additions.
+1. Install [BmSDK-AK](https://github.com/Team-BmSDK/BmSDK-AK) v0.21.0, then unzip the zip from the
+   [latest release of XeTrinityz/BmSDK-AK](https://github.com/XeTrinityz/BmSDK-AK/releases/latest) over the game
+   folder. Batwing needs that fork's fixes and additions. It works on Steam and Epic copies of the game. On Epic,
+   use the manual install for v0.21.0 since its installer won't find the game. Epic support is new, so Steam has
+   had more testing.
 2. Put this folder in `Batman Arkham Knight/BmGame/Mods/` so you have `BmGame/Mods/Batwing/mod.toml`.
 3. Start the game, get out into the city and press **Y**.
 
