@@ -141,7 +141,7 @@ internal static class Opt
         HideGameHud = Add(display, "hide_game_hud", "HIDE GAME HUD", false, "Hides the normal game HUD while flying.");
 
         Page system = Add("system", "SYSTEM", "Deck settings.");
-        DeckSize = Add(system, "deck_size", "DECK SIZE", 1f, 0.75f, 1.5f, 0.05f, Fmt.Times, "Deck scale.");
+        DeckSize = Add(system, "deck_size", "DECK SIZE", 1f, 0.75f, 2f, 0.05f, Fmt.Times, "Deck scale. It shrinks to fit if the screen is too small.");
         Effects = Add(system, "effects", "DECK EFFECTS", true, "Scanlines, glow and text animation. Turn off for a plain deck.");
         Diagnostics = Add(system, "diagnostics", "DIAGNOSTICS", false, "Logs extra info to Batwing.log. Turn on if you're reporting a bug.");
         Reset = Act(system, "reset", "RESET TO DEFAULTS", "Resets every setting to default. Press twice to confirm.", ResetAll);

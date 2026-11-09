@@ -72,6 +72,8 @@ internal sealed class Dial : Option
 
     public float Fraction => Max > Min ? Math.Clamp((Number - Min) / (Max - Min), 0f, 1f) : 0f;
 
+    public float DefaultFraction => Max > Min ? Math.Clamp((Default - Min) / (Max - Min), 0f, 1f) : 0f;
+
     public override bool Step(int dir)
     {
         float next = MathF.Round(Math.Clamp(Number + dir * Stride, Min, Max) / Stride) * Stride;

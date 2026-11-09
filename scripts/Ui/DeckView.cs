@@ -5,13 +5,13 @@ namespace Trinity.Batwing;
 internal static class DeckView
 {
     private const float PanelW = 800f;
-    private const float PanelH = 352f;
+    private const float PanelH = 360f;
     private const float Bottom = 64f;
     private const float Bezel = 13f;
     private const float HeadH = 32f;
     private const float TabW = 176f;
     private const float SideW = 124f;
-    private const float FootH = 66f;
+    private const float FootH = 74f;
     private const float RowH = 31f;
 
     private static int _scroll;
@@ -22,6 +22,7 @@ internal static class DeckView
     private const float TitleScale = 0.64f;
     private const float LabelScale = 0.5f;
     private const float SmallScale = 0.42f;
+    private const float HelpScale = 0.48f;
     private const float BrandScale = 0.58f;
 
     private const float DecodeSeconds = 0.32f;
@@ -33,9 +34,24 @@ internal static class DeckView
         (-0.12f, 0.34f), (-0.3f, 0.46f), (-0.5f, 0.2f), (-0.74f, 0.3f), (-1f, 0.04f), (-0.16f, -0.34f),
     };
 
-    private static float U(float v) => S(v) * Opt.DeckSize.Number;
+    // Players found the deck too small at 1.0x. The base is baked in here so saved settings pick it up too.
+    private const float BaseSize = 1.25f;
+    private const float Margin = 16f;
 
-    private static float Sc(float s) => s * Opt.DeckSize.Number;
+    private static float _size = BaseSize;
+
+    private static float U(float v) => S(v) * _size;
+
+    private static float Sc(float s) => s * _size;
+
+    // Shrinks the deck to fit on narrow or short screens, whatever the size setting asks for.
+    private static float FitSize()
+    {
+        float want = BaseSize * Opt.DeckSize.Number;
+        float fitW = (Gfx.W - S(Margin) * 2f) / S(PanelW + Bezel * 2f);
+        float fitH = (Gfx.H - S(Bottom) - S(Margin)) / S(PanelH + Bezel * 2f);
+        return MathF.Max(0.5f, MathF.Min(want, MathF.Min(fitW, fitH)));
+    }
 
     private static bool Fx => Opt.Effects.On;
 
@@ -58,6 +74,7 @@ internal static class DeckView
 
     public static void Draw(float anim)
     {
+        _size = FitSize();
         float ease = Ease.Out(anim);
         Alpha = ease;
         float w = U(PanelW), h = U(PanelH);
@@ -255,6 +272,8 @@ internal static class DeckView
                 for (int k = 0; k <= 4; k++)
                     Rect(MathF.Round(x0 + bw * k / 4f) - 0.5f, cy - U(6), 1f, U(12), Palette.Dim, 0.9f);
                 Rect(MathF.Round(x0 + bw * d.Fraction) - U(1), cy - U(7), U(2), U(14), col, 1f);
+                if (!d.IsDefault)
+                    Rect(MathF.Round(x0 + bw * d.DefaultFraction) - U(1.5f), cy + U(9), U(3), U(3), Palette.Dim, 0.9f);
                 TextRight(x1, cy + U(1), d.Value, col, Sc(LabelScale));
                 break;
             case Bind b:
@@ -420,19 +439,20 @@ internal static class DeckView
         float pad = U(Inset);
         Rect(x + pad, y, w - pad * 2f, 1f, Palette.Dim, 0.6f);
         float s = Sc(SmallScale);
+        float hs = Sc(HelpScale);
         float ty = y + U(8);
         string help = Deck.Binding is { } b
             ? "PRESS THE KEY FOR " + b.Label + ". BACKSPACE CANCELS. THE DECK'S OWN KEYS AND THE MOUSE BUTTONS CAN'T BE USED."
             : Deck.Level == 0 ? Deck.Current.Blurb : Deck.Selected?.Help ?? "";
         float width = w - pad * 2f;
-        string rest = FitLine(help, width, s, out string line1);
-        Text(x + pad, ty, line1, Palette.Dim, s);
+        string rest = FitLine(help, width, hs, out string line1);
+        Text(x + pad, ty, line1, Palette.Dim, hs);
         if (rest.Length > 0)
         {
-            string more = FitLine(rest, width, s, out string line2);
+            string more = FitLine(rest, width, hs, out string line2);
             if (more.Length > 0 && line2.Length > 3)
                 line2 = line2.Substring(0, line2.Length - 3) + "...";
-            Text(x + pad, ty + TextH(s) + U(2), line2, Palette.Dim, s);
+            Text(x + pad, ty + TextH(hs) + U(2), line2, Palette.Dim, hs);
         }
 
         float cy = y + foot - U(14);

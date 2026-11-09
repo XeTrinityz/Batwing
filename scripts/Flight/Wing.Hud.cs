@@ -11,6 +11,7 @@ internal sealed partial class Wing
     private const float TapeH = 230f;
     private const float TapeOff = 330f;
     private const float HeadingW = 420f;
+    private const float KeysCardSize = 1.25f;
 
     private static float U(float v) => S(v) * Opt.HudSize.Number;
 
@@ -656,25 +657,52 @@ internal sealed partial class Wing
             keys.Add(("H", "HIDE THESE KEYS"));
         }
 
-        float s = Sc(0.42f);
-        float lh = TextH(s) + U(9);
-        float keyW = 0f;
-        foreach ((string key, _) in keys)
-            keyW = MathF.Max(keyW, TextW(key, s) + U(12));
-        float w = U(320f), pad2 = U(14f);
-        float h = U(30f) + keys.Count * lh + pad2;
+        // Players found these keys too small to read, so the card runs bigger than the rest of the HUD.
+        // It still shrinks if a long list wouldn't fit on screen.
+        string mode = hover ? "HOVER" : "WINGS";
+        float k = KeysCardSize;
+        float s = 0f, ts = 0f, lh = 0f, keyW = 0f, pad2 = 0f, w = 0f, h = 0f;
+        float u(float v) => U(v) * k;
+
+        void Measure()
+        {
+            s = Sc(0.42f) * k;
+            ts = Sc(0.46f) * k;
+            lh = TextH(s) + u(9);
+            pad2 = u(14f);
+            keyW = 0f;
+            float actW = 0f;
+            foreach ((string key, string action) in keys)
+            {
+                keyW = MathF.Max(keyW, TextW(key, s) + u(12));
+                actW = MathF.Max(actW, TextW(action, s));
+            }
+
+            float titleW = SpacedW("FLIGHT KEYS", ts, 2f) + u(16) + TextW(mode, s);
+            w = pad2 * 2f + MathF.Max(keyW + u(10) + actW, titleW);
+            h = u(30f) + keys.Count * lh + pad2;
+        }
+
+        Measure();
+        float fit = MathF.Min((Gfx.H - S(150f) - S(16f)) / h, (Gfx.W - S(28f) * 2f) / w);
+        if (fit < 1f)
+        {
+            k *= fit;
+            Measure();
+        }
+
         float x = S(28f), y = Gfx.H - S(150f) - h;
 
         Rect(x, y, w, h, Palette.Screen, 0.82f);
-        Rect(x, y, U(3), h, Palette.Hud, 0.9f);
-        Spaced(x + pad2, y + U(8), "FLIGHT KEYS", Palette.Hud, Sc(0.46f), 2f);
-        TextRight(x + w - pad2, y + U(8) + TextH(Sc(0.46f)) * 0.5f, hover ? "HOVER" : "WINGS", Palette.Dim, s);
-        float cy = y + U(30f) + lh * 0.5f;
+        Rect(x, y, u(3), h, Palette.Hud, 0.9f);
+        Spaced(x + pad2, y + u(8), "FLIGHT KEYS", Palette.Hud, ts, 2f);
+        TextRight(x + w - pad2, y + u(8) + TextH(ts) * 0.5f, mode, Palette.Dim, s);
+        float cy = y + u(30f) + lh * 0.5f;
         foreach ((string key, string action) in keys)
         {
-            Outline(x + pad2, cy - lh * 0.5f + U(2), keyW, lh - U(4), Palette.Dim, 0.7f, U(1));
+            Outline(x + pad2, cy - lh * 0.5f + u(2), keyW, lh - u(4), Palette.Dim, 0.7f, u(1));
             TextCentre(x + pad2 + keyW * 0.5f, cy, key, Palette.Text, s);
-            TextMid(x + pad2 + keyW + U(10), cy, action, Palette.Dim, s);
+            TextMid(x + pad2 + keyW + u(10), cy, action, Palette.Dim, s);
             cy += lh;
         }
     }
