@@ -496,7 +496,35 @@ internal sealed partial class Wing
     private static readonly HashSet<nint> Manned = new();
 
     private const float TurretSplash = 300f;
+    private const float TankSplash = 700f;
     private const int TurretRounds = 30;
+
+    // A turret sits inside its tower and a tank's rounds often land on its shield or the road by it, so the
+    // trace names something else. Anything that lands this close counts as a hit on it, whatever is aimed at.
+    // On a strike the ordered target wins.
+    private Actor? ToughNear(Vector3 at)
+    {
+        if (_ordered is { IsValid: true } o && Tough(o) && ToughUp(o) && Vector3.Distance(at, o.Location) < Splash(o))
+            return o;
+
+        Actor? best = null;
+        float bestDist = float.MaxValue;
+        foreach (Actor foe in _foes)
+        {
+            if (!Tough(foe) || !ToughUp(foe))
+                continue;
+            float d = Vector3.Distance(at, foe.Location);
+            if (d < Splash(foe) && d < bestDist)
+            {
+                bestDist = d;
+                best = foe;
+            }
+        }
+
+        return best;
+    }
+
+    private static float Splash(Actor a) => a is RVehicleHeavyTank ? TankSplash : TurretSplash;
 
     private readonly Dictionary<nint, int> _turretHits = new();
 
@@ -746,11 +774,8 @@ internal sealed partial class Wing
         if (hit == null || at == Vector3.Zero)
             return;
 
-        // A turret is a small target, so rounds landing right by the one being aimed at count as hitting it. On a
-        // strike that's the ordered one, flying it yourself it's whatever the aim has settled on.
-        Actor? aimed = _ordered is { IsValid: true } o && Turret(o) ? o : _aimFoe is { IsValid: true } f && Turret(f) ? f : null;
-        if (aimed != null && hit.Ptr != aimed.Ptr && Vector3.Distance(at, aimed.Location) < TurretSplash)
-            hit = aimed;
+        if (hit is not RTankMissile and not RPawnVillain && !Foe(hit) && ToughNear(at) is { } near)
+            hit = near;
 
         int damage = Math.Max(vulcan.ChainGunDamage, 1);
         Safe.Run("batwing gun hit", () => Strike(hit, at, dir, damage, pawn, vulcan));
@@ -890,6 +915,7 @@ internal sealed partial class Wing
         }
 
         p.Init(dir);
+        Safe.Run("batwing shell credit", () => ShellCredit(muzzle, dir, homing ? _aimFoe : null, shell.Speed));
         Burst(heavy.FireFX, muzzle, dir);
         Sound(heavy.FireSound);
         _reloadSound = heavy.ReloadSound;
@@ -1045,22 +1071,49 @@ internal sealed partial class Wing
 
     private const float MissileSpeedGuess = 5000f;
     private const int MissileRounds = 12;
+    private const int ShellRounds = 12;
 
-    private readonly List<(Actor Turret, double Due)> _missilesInbound = new();
+    private readonly List<(Actor Turret, double Due, int Rounds)> _inbound = new();
 
-    // Shields stop the real missile, so each one aimed at a turret counts as a burst of rounds when it gets there.
+    private void Inbound(Actor target, float dist, float speed, int rounds)
+    {
+        if (_inbound.Count < 32)
+            _inbound.Add((target, Clock.Now + 0.3 + dist / Math.Max(speed, 1000f), rounds));
+    }
+
+    // Shields stop the real missiles and shells, so each one aimed at a turret or tank counts as a burst of
+    // rounds when it gets there.
     private void MissilesLand()
     {
         double now = Clock.Now;
-        for (int i = _missilesInbound.Count - 1; i >= 0; i--)
+        for (int i = _inbound.Count - 1; i >= 0; i--)
         {
-            (Actor turret, double due) = _missilesInbound[i];
+            (Actor turret, double due, int rounds) = _inbound[i];
             if (now < due)
                 continue;
-            _missilesInbound.RemoveAt(i);
+            _inbound.RemoveAt(i);
             if (turret.IsValid && ToughUp(turret))
-                ToughHit(turret, MissileRounds);
+                ToughHit(turret, rounds);
         }
+    }
+
+    // A homing shell goes where it's locked. A straight one goes where the line from the muzzle lands.
+    private void ShellCredit(Vector3 muzzle, Vector3 dir, Actor? homing, float speed)
+    {
+        Actor? target = homing is { IsValid: true } && Tough(homing) && ToughUp(homing) ? homing : null;
+        Vector3 at = target?.Location ?? Vector3.Zero;
+        if (target == null)
+        {
+            if (_craft is not { IsValid: true } craft)
+                return;
+            Actor? hit = craft.Trace(out at, out _, muzzle + dir * GunRange, muzzle, (Component.ECollisionFilter)GunFilter, Vector3.Zero, out _, 0);
+            if (hit == null || at == Vector3.Zero)
+                return;
+            target = Tough(hit) && Foe(hit) ? hit : ToughNear(at);
+        }
+
+        if (target != null)
+            Inbound(target, Vector3.Distance(muzzle, at), speed, ShellRounds);
     }
 
     private void Missile(RBatmobileMissileLauncher launcher, Actor target)
@@ -1068,8 +1121,8 @@ internal sealed partial class Wing
         if (launcher.MissileClass is not { IsValid: true } missile)
             return;
 
-        if (Tough(target) && _missilesInbound.Count < 32)
-            _missilesInbound.Add((target, Clock.Now + 0.3 + Vector3.Distance(_fm.Position, target.Location) / MissileSpeedGuess));
+        if (Tough(target))
+            Inbound(target, Vector3.Distance(_fm.Position, target.Location), MissileSpeedGuess, MissileRounds);
 
         _missileSide = _missileSide >= 0 ? -1 : 1;
         Vector3 from = WorldPoint(_fm.Position, (_missileSide < 0 ? _podL : _podR) + new Vector3(PodAhead, 0f, PodBelow));

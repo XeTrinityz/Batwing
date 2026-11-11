@@ -69,7 +69,8 @@ there.
 ## Settings
 
 Press **F4** for the settings menu. It covers flight assist, top speed, crashes, hover drift, camera, the HUD and its
-colour, weapons, controls and the Batmobile options. Your choices are saved to `settings.toml` in the mod folder, so
+colour, weapons, controls and the Batmobile options. If the HUD text is too small, turn up **HUD SIZE** under DISPLAY.
+**DECK SIZE** under SYSTEM does the same for the menu. Your choices are saved to `settings.toml` in the mod folder, so
 updating the mod doesn't reset them.
 
 ## Install
