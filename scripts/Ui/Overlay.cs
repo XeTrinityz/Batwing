@@ -9,6 +9,11 @@ internal static class Overlay
     private static FrameTimer _frame;
     private static float _deckAnim;
 
+    // The deck was last shown on the gauntlet, so it fades out there and not on the screen.
+    private static bool _onWrist;
+
+    public static float DeckAnim => _deckAnim;
+
     public static void Draw(Canvas? canvas)
     {
         bool paused = World.Paused;
@@ -27,6 +32,13 @@ internal static class Overlay
         float target = Deck.IsOpen ? 1f : 0f;
         float speed = Deck.IsOpen ? 7f : 9f;
         _deckAnim = _deckAnim < target ? Math.Min(target, _deckAnim + Gfx.Dt * speed) : Math.Max(target, _deckAnim - Gfx.Dt * speed);
+
+        if (Gauntlet.Hosting)
+            _onWrist = true;
+        else if (Deck.IsOpen || _deckAnim <= 0f)
+            _onWrist = false;
+        bool flat = !_onWrist && !Gauntlet.Waiting;
+        GauntletScreen.Refresh();
 
         bool hud = !paused && Wing.I.HasHud;
         if (canvas == null || (_deckAnim <= 0f && !hud && !Readout.Showing))
@@ -51,7 +63,7 @@ internal static class Overlay
                 }
             }
 
-            if (_deckAnim > 0f)
+            if (_deckAnim > 0f && flat)
                 DeckView.Draw(_deckAnim);
 
             Gfx.Alpha = 1f;

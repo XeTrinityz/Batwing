@@ -73,6 +73,11 @@ colour, weapons, controls and the Batmobile options. If the HUD text is too smal
 **DECK SIZE** under SYSTEM does the same for the menu. Your choices are saved to `settings.toml` in the mod folder, so
 updating the mod doesn't reset them.
 
+By default Batman raises his gauntlet and the menu shows on its hologram. In the Batmobile it shows over the dashboard
+and the car stops. While flying, gliding, fighting, in battle mode or by remote it opens on the screen instead. Set
+**OPEN DECK ON** under SYSTEM to SCREEN to always have it on the screen. **GAUNTLET SIZE** makes the hologram bigger
+and its text smaller so more fits, and **GAUNTLET TEXT** sizes the text on top of that.
+
 ## Install
 
 1. Install [BmSDK-AK](https://github.com/Team-BmSDK/BmSDK-AK) v0.21.0, then unzip the zip from the

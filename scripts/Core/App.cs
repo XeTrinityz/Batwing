@@ -35,6 +35,7 @@ internal static class App
         _started = false;
 
         Deck.Close();
+        Safe.Run("gauntlet", Gauntlet.Release);
         Pad.Shutdown();
         Shapes.Release();
         Settings.Flush();
@@ -47,6 +48,7 @@ internal static class App
     public static void EnterWorld()
     {
         Deck.Close();
+        Safe.Run("gauntlet", Gauntlet.Release);
         World.Forget();
         Districts.Forget();
         Safe.Run("world change", Wing.I.WorldChanged);
@@ -55,6 +57,7 @@ internal static class App
     public static void EnterMenu()
     {
         Deck.Close();
+        Safe.Run("gauntlet", Gauntlet.Release);
         World.Forget();
     }
 
@@ -93,6 +96,7 @@ internal static class App
         }
 
         Deck.Tick(dt);
+        Safe.Run("gauntlet", () => Gauntlet.Tick(dt));
     }
 
     public static void Frame(Canvas canvas)

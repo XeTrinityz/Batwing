@@ -44,12 +44,17 @@ internal static class Opt
     public static Switch Hints = null!;
     public static Switch HideGameHud = null!;
 
+    public static Pick DeckOn = null!;
+    public static Dial GauntletSize = null!;
+    public static Dial GauntletText = null!;
     public static Dial DeckSize = null!;
     public static Switch Effects = null!;
     public static Switch Diagnostics = null!;
     public static Act Reset = null!;
 
     public static bool Direct => Controls.Index == 1;
+
+    public static bool DeckOnGauntlet => DeckOn.Key == "gauntlet";
 
     public static void Build()
     {
@@ -141,6 +146,12 @@ internal static class Opt
         HideGameHud = Add(display, "hide_game_hud", "HIDE GAME HUD", false, "Hides the normal game HUD while flying.");
 
         Page system = Add("system", "SYSTEM", "Deck settings.");
+        DeckOn = Add(system, "deck_on", "OPEN DECK ON", new[] { "gauntlet", "screen" }, new[] { "GAUNTLET", "SCREEN" },
+            "Where the deck opens. GAUNTLET has Batman raise his gauntlet and shows the deck on its hologram. In the Batmobile it shows over the dashboard and the car stops. While flying, gliding, fighting, in battle mode or by remote it opens on the screen.");
+        GauntletSize = Add(system, "gauntlet_size", "GAUNTLET SIZE", 1.25f, 1f, 1.8f, 0.05f, Fmt.Times,
+            "How big the gauntlet's hologram is while the deck is on it. The text gets smaller as it grows, so more fits on it. 1.00x is the game's own size.");
+        GauntletText = Add(system, "gauntlet_text", "GAUNTLET TEXT", 1f, 0.6f, 1.4f, 0.05f, Fmt.Times,
+            "Text size on the gauntlet, on top of how GAUNTLET SIZE shrinks it.");
         DeckSize = Add(system, "deck_size", "DECK SIZE", 1f, 0.75f, 2f, 0.05f, Fmt.Times, "Deck scale. It shrinks to fit if the screen is too small.");
         Effects = Add(system, "effects", "DECK EFFECTS", true, "Scanlines, glow and text animation. Turn off for a plain deck.");
         Diagnostics = Add(system, "diagnostics", "DIAGNOSTICS", false, "Logs extra info to Batwing.log. Turn on if you're reporting a bug.");

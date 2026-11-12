@@ -84,6 +84,8 @@ internal sealed partial class Wing
 
     private bool Hauling => _haul != Haul.None;
 
+    public bool Lifting => Hauling;
+
     private bool Catching => _catchUntil > Clock.Now;
 
     public string LiftLabel => _phase switch
