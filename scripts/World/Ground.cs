@@ -64,8 +64,13 @@ internal static class Ground
             return "streaming is locked by " + (ri.LevelStreamingLockedBy.ToString() is { Length: > 0 } by ? by : "the game");
         if (ri.LevelStreamingInitialising)
             return "streaming is starting up";
-        if (Gone(ri, volume) || ri.GetLevelForObject(volume) is { IsValid: true, bIsVisible: false })
+        if (Gone(ri, volume))
             return "its volume is going away";
+
+        // District volumes always sit in a streamed level. Once that level has unloaded no LevelStreaming owns
+        // the volume any more, but the actor lives on until the next collection and entering it then crashes.
+        if (ri.GetLevelForObject(volume) is not { IsValid: true, bIsVisible: true })
+            return "its level isn't loaded";
 
         foreach (TArray<RLevelTransition> links in new[]
         {

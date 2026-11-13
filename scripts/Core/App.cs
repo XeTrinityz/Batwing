@@ -116,15 +116,31 @@ internal static class Fallback
 {
     private const double QuietSeconds = 0.5;
 
+    // One long frame, like a streaming hitch, also leaves a gap between ticks. Only a run of draws with
+    // no tick at all means OnTick really stopped.
+    private const int QuietDraws = 30;
+
     private static long _lastSdkTick = System.Diagnostics.Stopwatch.GetTimestamp();
+    private static int _drawsSinceTick;
     private static bool _logged;
 
-    public static bool Active => System.Diagnostics.Stopwatch.GetElapsedTime(_lastSdkTick).TotalSeconds > QuietSeconds;
+    public static bool Active => _drawsSinceTick >= QuietDraws
+        && System.Diagnostics.Stopwatch.GetElapsedTime(_lastSdkTick).TotalSeconds > QuietSeconds;
 
-    public static void NoteSdkTick() => _lastSdkTick = System.Diagnostics.Stopwatch.GetTimestamp();
+    // True while the tick runs from inside a draw, where the game may be partway through streaming.
+    public static bool Running { get; private set; }
+
+    public static void NoteSdkTick()
+    {
+        _lastSdkTick = System.Diagnostics.Stopwatch.GetTimestamp();
+        _drawsSinceTick = 0;
+    }
 
     public static void Frame()
     {
+        if (_drawsSinceTick < QuietDraws)
+            _drawsSinceTick++;
+
         if (!Active || World.Paused)
             return;
 
@@ -134,6 +150,14 @@ internal static class Fallback
             Log.Info("OnTick stopped firing, running from OnDraw instead.");
         }
 
-        App.Tick();
+        Running = true;
+        try
+        {
+            App.Tick();
+        }
+        finally
+        {
+            Running = false;
+        }
     }
 }

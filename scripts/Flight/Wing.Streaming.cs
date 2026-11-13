@@ -12,7 +12,7 @@ internal sealed partial class Wing
 
     private static int Agree(string cell)
     {
-        if (World.WorldInfo is not { } wi)
+        if (Fallback.Running || World.WorldInfo is not { } wi)
             return 0;
 
         int changed = 0;
@@ -101,6 +101,10 @@ internal sealed partial class Wing
     // the game's object table, which is a hard crash.
     private void Lead()
     {
+        // Streaming calls from inside a draw can land in the middle of the game's own streaming work.
+        if (Fallback.Running)
+            return;
+
         // The game dies when its 785,000 object table fills, and fast flight streams districts in quicker
         // than it collects the old ones. Low on room, stop leading and ask for a collection.
         int room = ObjectTable.Headroom;
