@@ -1,160 +1,157 @@
-using System.Globalization;
 using System.Numerics;
 using BmSDK;
 using BmSDK.BmGame;
 using BmSDK.Engine;
+using Pov = BmSDK.GameObject.FTPOV;
 
 namespace Trinity.Batwing;
 
-internal sealed partial class Wing
+// What the Batwing is doing right now. Each one is made fresh when it starts, so nothing carries over.
+internal abstract class Phase
 {
-    public static readonly Wing I = new();
+    public abstract string Status { get; }
 
-    private const string Title = "BATWING";
+    public virtual Rgba Lamp => Palette.Hud;
 
-    private const string KitOwner = "batwing";
+    public virtual bool Blink => false;
 
-    private const string HeldKey = "batwing.held";
+    public abstract void Step(PlayerController pc, float dt);
 
-    private const float Metre = 100f;
-    private const float Deg = Geo.Deg;
-
-    private enum Phase
+    // Called once when another phase takes over or the Batwing goes. Puts back whatever it changed.
+    public virtual void Leave()
     {
-        Off,
-        Arriving,
-        Flying,
-        Leaving,
-        Escort,
     }
 
-    private Phase _phase;
-    private readonly FlightModel _fm = new();
-    private string? _ended;
-    private bool _endedGood;
-    private Every _reassert;
-
-    public bool OwnsCamera => _phase == Phase.Flying || _blendOut > 0f;
-
-    public bool Flying => _phase == Phase.Flying;
-
-    public bool HidesHud => _phase == Phase.Flying && Opt.HideGameHud.On;
-
-    public bool HasHud => _phase is Phase.Flying or Phase.Arriving or Phase.Escort;
-
-    public bool CraftLive => _phase is Phase.Flying or Phase.Arriving;
-
-    public string ActionLabel => _phase switch
+    public virtual void Draw(Canvas canvas)
     {
-        Phase.Arriving => "WAVE OFF",
-        Phase.Escort => "CALL BATWING",
-        Phase.Flying => _remote ? "END REMOTE" : _bailWait >= 0f ? "JUMP NOW" : "BAIL OUT",
+    }
+}
+
+// The Batwing as the rest of the mod sees it. It holds the craft and the phase and hands calls on.
+internal static class Wing
+{
+    private const float BlendOutSeconds = 0.8f;
+    private const double QuietCamera = 0.25;
+
+    private static Phase? _phase;
+    private static Craft? _craft;
+    private static string? _ended;
+    private static bool _endedGood;
+    private static bool _tickSaid;
+    private static float _blendOut;
+    private static Pov _blendFrom;
+
+    public static readonly Voice Voice = new();
+
+    public static Craft? Craft => _craft is { Alive: true } c ? c : null;
+
+    public static Phase? Now => _phase;
+
+    public static bool Piloting => _phase is Pilot;
+
+    public static bool Remote => _phase is Pilot { Remote: true };
+
+    public static bool Escorting => _phase is Escort;
+
+    public static bool Busy => _phase != null;
+
+    public static bool Lifting => _phase is Escort { Hauling: true };
+
+    public static bool Live => _phase is Pilot or Inbound;
+
+    public static bool HidesGameHud => _phase is Pilot && Opt.HideGameHud.On;
+
+    public static string Status => _phase?.Status ?? (World.InGame ? "STANDBY" : "NO WORLD");
+
+    public static Rgba Lamp => _phase?.Lamp ?? Palette.Faint;
+
+    public static bool LampBlink => _phase?.Blink ?? false;
+
+    public static string CallLabel => _phase switch
+    {
+        Inbound => "WAVE OFF",
+        Pilot { Remote: true } => "END REMOTE",
+        Pilot { Waiting: true } => "JUMP NOW",
+        Pilot => "BAIL OUT",
         _ => "CALL BATWING",
     };
 
-    public string StateLabel => _phase switch
+    public static string RemoteLabel => Remote ? "END REMOTE" : "REMOTE CONTROL";
+
+    public static string EscortLabel => Escorting ? "DISMISS ESCORT" : "ESCORT";
+
+    public static string LiftLabel => _phase switch
     {
-        Phase.Arriving => "INBOUND",
-        Phase.Flying => _remote ? (_remoteFar ? "REMOTE // WEAK SIGNAL" : "REMOTE") : _landed ? "LANDED" : _bailWait >= 0f ? "WAITING FOR GROUND" : Carrying ? "CARRYING BATMOBILE" : _fm.Boosting ? "AFTERBURNER" : _fm.Hover > 0.5f ? "HOVER" : "WINGS",
-        Phase.Leaving => "DEPARTING",
-        Phase.Escort => Hauling ? (_delivery ? "DELIVERY // " : "LIFT // ") + HaulState() : Catching ? "ESCORT // CATCHING" : _pickup ? "ESCORT // PICKUP" : _strike != null ? (Chasing(_strike) ? "ESCORT // CHASING" : "ESCORT // STRIKING") : EscortTarget() != null ? "ESCORT // ENGAGING" : "ESCORT",
-        _ => World.InGame ? "STANDBY" : "NO WORLD",
+        Pilot => Craft?.Carrying == true ? "DROP BATMOBILE" : "HOOK BATMOBILE",
+        Escort { Hauling: true } e => e.Carrying ? "SET DOWN HERE" : "CANCEL LIFT",
+        _ => World.Driving != null ? "LIFT TO WAYPOINT" : "BRING BATMOBILE",
     };
 
-    public Rgba Lamp => _phase switch
+    public static string LiftNote => _phase is Escort { Hauling: true } e ? e.HaulStatus : Craft?.Carrying == true ? "CARRYING" : "";
+
+    // Takes over from whatever phase there was.
+    public static void Go(Phase? next)
     {
-        Phase.Flying or Phase.Escort => Palette.Hud,
-        Phase.Arriving => Palette.CautionNow,
-        Phase.Leaving => Palette.Dim,
-        _ => Palette.Faint,
-    };
-
-    public bool LampBlink => _phase == Phase.Arriving || (_phase == Phase.Flying && _bailWait >= 0f);
-
-    public float PitchDegrees => _fm.Pitch() * Deg;
-
-    public float BankRadians => _fm.Bank();
-
-    public float ThrottleFraction => _fm.Hover > 0.5f ? Math.Clamp(_fm.Jets / 2f, 0f, 1f) : _fm.Throttle;
-
-    public float HullFraction => Math.Clamp(_hull, 0f, 1f);
-
-    public float GLoad => _fm.GLoad;
-
-    public string SpeedText => Speed(_fm.Velocity.Length(), out string unit) + " " + unit;
-
-    public string AltitudeText => _ground >= GroundReach ? "---" : Fmt.Whole(MathF.Max(0f, _ground) / Metre) + " M";
-
-    private static string Speed(float unitsPerSecond, out string unit)
-    {
-        float factor;
-        switch (Opt.SpeedUnit.Index)
-        {
-            case 1:
-                unit = "KM/H";
-                factor = 0.036f;
-                break;
-            case 2:
-                unit = "M/S";
-                factor = 0.01f;
-                break;
-            default:
-                unit = "MPH";
-                factor = 0.022369363f;
-                break;
-        }
-
-        return MathF.Round(unitsPerSecond * factor).ToString(CultureInfo.InvariantCulture);
+        Phase? was = _phase;
+        _phase = next;
+        if (was != null && !ReferenceEquals(was, next))
+            Safe.Run("phase leave", was.Leave);
+        if (next == null)
+            Drop();
     }
 
-    public void Started() => Recover();
-
-    public void WorldChanged()
+    public static void Use(Craft craft)
     {
-        Stop(silent: true);
-        Car.Forget();
+        if (!ReferenceEquals(_craft, craft))
+            Drop();
+        _craft = craft;
     }
 
-    public void LeftGame()
+    // Takes the craft out of the world and leaves nothing behind.
+    public static void Drop()
     {
-        Stop(silent: true);
-        ForgetKit();
-        Car.Forget();
+        Craft? craft = _craft;
+        _craft = null;
+        craft?.Remove();
     }
 
-    public void Shutdown()
+    // Ends whatever is going on, with a notice saying why.
+    public static void Stop(string? why, bool good)
     {
-        Stop(silent: true);
-        Pad.HoldButtons = false;
-    }
-
-    private double _viewAt;
-    private bool _tickStepSaid;
-
-    public void Tick(float dt)
-    {
-        Safe.Run("batwing drop", FallStep);
-        Safe.Run("batwing settle", SettleStep);
-
-        // The escort and departure normally run from Batman's camera update. If that goes quiet, like it
-        // might in the Batmobile, run them from the game tick so the Batwing doesn't freeze in the air.
-        if (_phase is not (Phase.Escort or Phase.Leaving) || Clock.Now - _viewAt < 0.25 || World.Paused || World.Pc is not { } pc)
+        Go(null);
+        if (why == null)
             return;
+        _ended = why;
+        _endedGood = good;
+    }
 
-        if (!_tickStepSaid)
-        {
-            _tickStepSaid = true;
-            Log.Info(Title + ": camera update went quiet (camera " + (pc.PlayerCamera?.Class.Name.ToString() ?? "none") + ", pawn "
-                + (World.Pawn?.Class.Name.ToString() ?? "none") + "), running from the game tick.");
-        }
+    public static void Fail(Exception ex)
+    {
+        Log.Info("Batwing stopped: " + Log.Why(ex));
+        Safe.Run("batwing stop", () => Go(null));
+        _ended = ex is Refusal ? ex.Message.ToUpperInvariant() : "STOPPED: " + ex.Message.ToUpperInvariant();
+        _endedGood = false;
+    }
 
+    public static void Toast(string text) => Toasts.Show(text, _phase is Pilot or Escort);
+
+    public static void BlendOut(Pov from)
+    {
+        _blendFrom = from;
+        _blendOut = from.FOV > 1f ? BlendOutSeconds : 0f;
+    }
+
+    // Requests the player can make. Anything that can't be done right now comes back as a notice.
+    private static void Request(string what, Action run)
+    {
         try
         {
-            float step = Math.Clamp(dt, 0f, 0.1f);
-            if (_phase == Phase.Escort)
-                EscortStep(pc, step);
-            else
-                LeaveStep(step);
+            run();
+        }
+        catch (Refusal no)
+        {
+            Log.Info("Batwing: " + what + " refused, " + no.Message + ".");
+            Toasts.Notice(no.Message.ToUpperInvariant(), false);
         }
         catch (Exception ex)
         {
@@ -162,189 +159,190 @@ internal sealed partial class Wing
         }
     }
 
-    public void Frame()
-    {
-        Pad.HoldButtons = _phase == Phase.Flying && !Deck.IsOpen;
-
-        if (_ended == null)
-            return;
-
-        Readout.Notice(Title, _ended, _endedGood);
-        _ended = null;
-    }
-
-    public void Toggle()
+    public static void CallPressed() => Request("call", () =>
     {
         switch (_phase)
         {
-            case Phase.Flying:
-                Safe.Run("batwing exit", () =>
-                {
-                    if (_remote)
-                        EndRemote("REMOTE OFF");
-                    else if (_bailWait >= 0f)
-                        Exit("BAILED OUT");
-                    else
-                        Bailout();
-                });
+            case Pilot pilot:
+                pilot.Exit();
                 break;
-            case Phase.Arriving:
-                Safe.Run("batwing wave off", () => Depart(0f));
-                Readout.Toast(Title, "WAVED OFF", false);
+            case Inbound inbound:
+                Departing.From(inbound.Craft, 0f);
+                Toast("WAVED OFF");
+                break;
+            case Escort escort:
+                escort.Board();
                 break;
             default:
-                try
-                {
-                    Call();
-                }
-                catch (Exception ex)
-                {
-                    Log.Info(Title + " refused: " + ex.Message);
-                    Readout.Notice(Title, ex.Message.ToUpperInvariant(), false);
-                }
-
+                Inbound.Call();
                 break;
         }
-    }
+    });
 
-    private static RPawnPlayer Require()
+    public static void RemotePressed() => Request("remote", () =>
+    {
+        if (_phase is Pilot { Remote: true } pilot)
+            pilot.Exit();
+        else if (_phase != null)
+            throw new Refusal(_phase is Pilot ? "already flying" : "the Batwing is busy");
+        else
+            Pilot.StartRemote();
+    });
+
+    public static void EscortPressed() => Request("escort", () =>
+    {
+        if (_phase is Escort escort)
+            escort.Dismiss();
+        else if (_phase != null)
+            throw new Refusal(_phase is Pilot ? "already flying" : "the Batwing is busy");
+        else
+            Escort.Start(World.Driving);
+    });
+
+    public static void StrikePressed() => Request("strike", () =>
+    {
+        if (_phase is Escort escort)
+            escort.Strike();
+        else
+            throw new Refusal("strikes are for the escort, call it with " + Prompt.Of(Act.Escort).Text);
+    });
+
+    public static void LiftPressed() => Request("lift", () =>
     {
         if (!World.Ready)
-            throw new InvalidOperationException("the game is still loading");
+            throw new Refusal("the game is still loading");
         if (World.Paused)
-            throw new InvalidOperationException("not while paused");
+            throw new Refusal("not while paused");
 
-        PlayerController pc = World.Pc ?? throw new InvalidOperationException("the game is still loading");
-        if (World.Pawn is RVehicle)
-            throw new InvalidOperationException("get out of the Batmobile first");
-        if (World.Pawn is not RPawnPlayer pawn)
-            throw new InvalidOperationException("the game is still loading");
-        if (Hooks.InCinematic(pc) || Hooks.PlayerCam() is not { } cam || !Hooks.IsPlayerView(cam, pc))
-            throw new InvalidOperationException("not during a cutscene");
-        if (pawn.Health <= 0)
-            throw new InvalidOperationException("not while you're down");
-        if (!Ground.InCity(pawn.Location))
-            throw new InvalidOperationException("only out in the city");
-
-        return pawn;
-    }
-
-    private void Call()
-    {
-        RPawnPlayer pawn = Require();
-        if (_phase == Phase.Flying)
-            return;
-
-        _remote = false;
-        Kit kit = LoadKit();
-        bool airborne = pawn.Physics != Actor.EPhysics.PHYS_Walking && !NearGround(pawn);
-
-        // The escort is already close, so he goes up into that one rather than a second one flying in.
-        if (_phase == Phase.Escort && _craft is { IsValid: true } && EscortPickup(pawn, airborne))
-            return;
-
-        if (_phase != Phase.Off)
-            DropCraft();
-
-        if (!Opt.FlyIn.On || airborne)
+        switch (_phase)
         {
-            BoardNow(pawn, kit, airborne);
-            return;
+            case Pilot pilot:
+                pilot.HookOrDrop();
+                return;
+            case Inbound or Departing:
+                throw new Refusal("the Batwing is busy");
+            case Escort escort:
+                escort.Lift();
+                return;
         }
 
-        StartArrival(pawn, kit);
+        if (World.Driving is { } car)
+            Escort.StartRide(car);
+        else
+            Escort.StartDelivery();
+    });
+
+    // Runs from Batman's camera update, which is where the Batwing moves.
+    public static bool View(R3rdPersonCamera cam, PlayerController pc, in Pov game, ref Pov pov, float dt)
+    {
+        if (_phase == null && _blendOut <= 0f && !Voice.Playing)
+            return false;
+
+        try
+        {
+            dt = World.Paused ? 0f : Math.Clamp(dt, 0f, 0.1f);
+            Voice.Step(Craft, dt);
+            if (_phase is Pilot pilot)
+            {
+                pilot.Turn(game.Rotation, dt);
+                _phase.Step(pc, dt);
+                if (_phase is Pilot still && ReferenceEquals(still, pilot))
+                {
+                    pov = pilot.View(game, dt);
+                    return true;
+                }
+            }
+            else
+            {
+                _phase?.Step(pc, dt);
+            }
+
+            if (_blendOut <= 0f)
+                return false;
+
+            _blendOut = MathF.Max(0f, _blendOut - MathF.Max(dt, 1f / 60f));
+            pov = ChaseCam.Lerp(_blendFrom, game, Ease.Smooth(1f - _blendOut / BlendOutSeconds));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Fail(ex);
+            return false;
+        }
     }
 
-    // Some ground moves aren't PHYS_Walking. Boarding in place there spawns the craft in the floor and wrecks it.
-    private static bool NearGround(RPawnPlayer pawn)
+    // The game tick. The escort and departure normally run from Batman's camera update. If that goes quiet,
+    // as it can in the Batmobile, they run from here so the Batwing doesn't freeze in the air.
+    public static void Tick(float dt)
     {
-        Vector3 at = pawn.Location;
-        float reach = Ground.Lift(pawn) + 400f;
-        return Ground.Ray(pawn, at, at - new Vector3(0f, 0f, reach), out _, out _);
-    }
-
-    private void Exit(string why)
-    {
-        if (_phase != Phase.Flying)
+        CargoWatch.Tick();
+        if (_phase is not (Escort or Departing) || Clock.Now - CameraHook.LastUpdate < QuietCamera || World.Paused || World.Pc is not { } pc)
             return;
 
-        _bailWait = -1f;
-        if (_cargo is { } held)
+        if (!_tickSaid)
         {
-            bool low = Floor(held, _rest + LowDrop, out _);
-            DropCargo(low ? Vector3.Zero : _fm.Velocity, low);
+            _tickSaid = true;
+            Log.Info("Batwing: the camera update went quiet (camera " + (pc.PlayerCamera?.Class.Name.ToString() ?? "none") + ", pawn "
+                + (World.Pawn?.Class.Name.ToString() ?? "none") + "), running from the game tick.");
         }
 
-        RPawnPlayer? pawn = HeldPawn();
-        LetGo(pawn, Bail());
-        if (pawn is { IsValid: true } && EscortAfterBail(pawn.Location))
+        try
         {
-            Toast(why + " // ON ESCORT");
-            return;
+            Voice.Step(Craft, dt);
+            _phase.Step(pc, Math.Clamp(dt, 0f, 0.1f));
         }
-
-        Hatch(close: false);
-        Depart(1.2f);
-        Toast(why);
+        catch (Exception ex)
+        {
+            Fail(ex);
+        }
     }
 
-    private void Stop(bool silent)
+    public static void Frame()
     {
-        bool wasFlying = _phase == Phase.Flying;
-        if (wasFlying)
-            LetGo(HeldPawn(), null);
-
-        DropCraft();
-        _phase = Phase.Off;
-        _haul = Haul.None;
-        _liftCar = null;
-        _catchUntil = -1.0;
-        _blendIn = 0f;
-        if (silent)
-        {
-            _blendOut = 0f;
-            StopVoice();
-        }
-
-        Pad.HoldButtons = false;
-    }
-
-    private void Fail(Exception ex)
-    {
-        Log.Info(Title + " stopped: " + Log.Why(ex));
-        Safe.Run("batwing stop", () => Stop(silent: false));
-        _ended = "STOPPED: " + ex.Message.ToUpperInvariant();
-        _endedGood = false;
-    }
-
-    private void Toast(string state) => Readout.Toast(Title, state, _phase == Phase.Flying);
-
-    private void Recover()
-    {
-        foreach (RBatwing craft in World.All<RBatwing>())
-        {
-            if (craft.Tag.Index == CraftTag.Index && !craft.bDeleteMe)
-                Safe.Run("batwing leftover", () => craft.Destroy());
-        }
-
-        Safe.Run("batwing remote leftover", RecoverRemote);
-        Safe.Run("batwing cargo leftover", RecoverCargo);
-
-        if (!Shared.GetValue(HeldKey, false))
+        GameHud.Tick(HidesGameHud);
+        if (_ended == null)
             return;
 
-        Shared.Set(HeldKey, false);
-        if (World.Player is not { IsValid: true } pawn)
-            return;
+        Toasts.Notice(_ended, _endedGood);
+        _ended = null;
+    }
 
-        Log.Info(Title + ": scripts reloaded mid flight, restoring Batman.");
-        if (pawn.bHidden)
-            pawn.SetHidden(false);
-        if (pawn.bTickIsDisabled)
-            pawn.SetTickIsDisabled(false);
-        if (pawn.Mesh is { IsValid: true } mesh)
-            mesh.bPauseAnims = false;
-        pawn.SetCollision(true, true, pawn.bIgnoreEncroachers);
-        pawn.SetPhysics(Actor.EPhysics.PHYS_Falling, false);
+    public static void Draw(Canvas canvas) => _phase?.Draw(canvas);
+
+    public static bool HasHud => _phase != null && Opt.Hud.On || _phase is Pilot;
+
+    // Gunfire meant for Batman in the cockpit hits the Batwing.
+    public static bool Absorbs(RPawnPlayer pawn, int damage, Class? type, Vector3 at) =>
+        _phase is Pilot pilot && pilot.Absorbs(pawn, damage, type, at);
+
+    public static void Started()
+    {
+        Craft.ClearLeftovers();
+        Safe.Run("pilot leftover", Pilot.Recover);
+        Safe.Run("cargo leftover", Cargo.Recover);
+    }
+
+    public static void WorldChanged()
+    {
+        Quit();
+        Batmobile.Forget();
+        Foes.Forget();
+        CargoWatch.Forget();
+    }
+
+    public static void LeftGame()
+    {
+        WorldChanged();
+        Kit.Forget();
+        Rumble.Release();
+    }
+
+    public static void Shutdown() => Quit();
+
+    private static void Quit()
+    {
+        Go(null);
+        Voice.Stop();
+        _blendOut = 0f;
     }
 }

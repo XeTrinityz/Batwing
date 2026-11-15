@@ -56,7 +56,7 @@ internal static class WorldView
             if (!_reported)
             {
                 _reported = true;
-                Log.Info("WorldView: Canvas.Project gave " + s + ", projecting from the FOV (" + fov + ") instead.");
+                Log.Detail("WorldView: Canvas.Project gave " + s + ", projecting from the FOV (" + fov + ") instead.");
             }
         }
 

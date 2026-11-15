@@ -1,10 +1,16 @@
-using BmSDK.Framework;
-
 namespace Trinity.Batwing;
 
+// How full the game's object table is. The game dies outright when it fills, and fast flight streams in
+// districts quicker than the game collects the old ones, so loading anything checks this first.
 internal static unsafe class ObjectTable
 {
     public const int Capacity = 785000;
+
+    // Below this the mod stops loading and asks for a collection.
+    public const int Low = 90000;
+
+    // Below this nothing more gets loaded at all.
+    public const int Full = 40000;
 
     private static int _alive = -1;
     private static Every _count;
@@ -36,14 +42,7 @@ internal static unsafe class ObjectTable
             if (used <= 0 || used > Capacity)
                 return -1;
 
-            int alive = 0;
-            for (int i = 0; i < used; i++)
-            {
-                if (slots[i] != 0)
-                    alive++;
-            }
-
-            return alive;
+            return used - MemoryExtensions.Count(new ReadOnlySpan<ulong>(slots, used), 0UL);
         }
         catch
         {

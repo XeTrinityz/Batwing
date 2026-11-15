@@ -1,29 +1,49 @@
 using System.Globalization;
+using System.Reflection;
 
 namespace Trinity.Batwing;
 
 internal static class Log
 {
     private const double ThrottleSeconds = 5.0;
+    private const long KeepPrevious = 200;
 
-    private static readonly Dictionary<string, double> _next = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, (double At, int Missed)> _next = new(StringComparer.Ordinal);
     private static string _path = "";
 
     public static bool Diagnostics;
 
     public static void Open(string dir)
     {
+        string host = Host();
         try
         {
             _path = Path.Combine(dir, "Batwing.log");
             var old = new FileInfo(_path);
-            if (old.Exists && old.Length > 200)
+            if (old.Exists && old.Length > KeepPrevious)
                 File.Copy(_path, Path.Combine(dir, "Batwing.prev.log"), true);
-            File.WriteAllText(_path, "Batwing " + App.Version + " " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + Environment.NewLine);
+            File.WriteAllText(_path, "Batwing " + App.Version + " " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + ", " + host + Environment.NewLine);
         }
         catch
         {
             _path = "";
+        }
+    }
+
+    // The game build and SDK the mod is running on, for bug reports.
+    private static string Host()
+    {
+        try
+        {
+            string sdk = typeof(Script).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+            int hash = sdk.IndexOf('+');
+            if (hash >= 0 && sdk.Length > hash + 8)
+                sdk = sdk[..(hash + 8)];
+            return GameDefine.Current.Name + " build, BmSDK " + sdk;
+        }
+        catch (Exception)
+        {
+            return "build unknown";
         }
     }
 
@@ -48,6 +68,19 @@ internal static class Log
             Info(text);
     }
 
+    public static void Throttled(string key, string text)
+    {
+        if (Due(key, out _))
+            Info(text);
+    }
+
+    public static void Error(string what, Exception ex)
+    {
+        if (Due(what, out int missed))
+            Info(what + " failed: " + Why(ex) + (missed > 0 ? ", and " + missed + " more times since the last line" : ""));
+    }
+
+    // The message and where in the mod it came from, which is what a bug report needs.
     public static string Why(Exception ex)
     {
         try
@@ -55,7 +88,7 @@ internal static class Log
             var trace = new System.Diagnostics.StackTrace(ex, true);
             foreach (System.Diagnostics.StackFrame frame in trace.GetFrames())
             {
-                System.Reflection.MethodBase? m = frame.GetMethod();
+                MethodBase? m = frame.GetMethod();
                 if (m?.DeclaringType?.Namespace?.StartsWith("Trinity", StringComparison.Ordinal) != true)
                     continue;
 
@@ -70,25 +103,19 @@ internal static class Log
         return ex.Message + " (" + ex.GetType().Name + ")";
     }
 
-    public static bool Due(string key)
+    private static bool Due(string key, out int missed)
     {
         double now = Clock.Now;
-        if (_next.TryGetValue(key, out double due) && now < due)
+        _next.TryGetValue(key, out (double At, int Missed) last);
+        if (now < last.At)
+        {
+            _next[key] = (last.At, last.Missed + 1);
+            missed = 0;
             return false;
+        }
 
-        _next[key] = now + ThrottleSeconds;
+        missed = last.Missed;
+        _next[key] = (now + ThrottleSeconds, 0);
         return true;
-    }
-
-    public static void Throttled(string key, string text)
-    {
-        if (Due(key))
-            Info(text);
-    }
-
-    public static void Error(string key, string what, Exception ex)
-    {
-        if (Due(key))
-            Info(what + " failed: " + Why(ex));
     }
 }

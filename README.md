@@ -12,8 +12,12 @@ Built on [BmSDK-AK](https://github.com/Team-BmSDK/BmSDK-AK) with the fixes in
 
 **Flying.** Press **Y** and the Batwing flies in and hovers over you. On the ground Batman grapples up into the
 cockpit. Call it while gliding and it picks you up in the air. Fly on the wings like a jet or switch to hover and move
-around like a helicopter. Flight assist levels the wings, stops stalls and drops into hover when you slow down. Turn it
-off and you can stall and fall. Crashes damage the hull and enough of them wreck it. Press **Y** or **E** to bail out.
+around like a helicopter. With mouse aim the Batwing flies where you look and banks into turns for you. Small
+corrections slide the nose across without banking, so lining up a shot is easy. In hover it holds its spot and height
+when you let go of the sticks. Crashes damage the hull and enough of them wreck it. Press **Y** or **E** to bail out.
+
+**Flight assist.** FULL levels the wings, stops stalls and drops into hover when you slow right down. STANDARD stops
+stalls and keeps turns clean but leaves the rest to you. OFF gives no help at all.
 
 **Weapons.** It uses your Batmobile's weapons and upgrades. The Vulcan gun, the heavy cannon and lock-on missiles.
 Aim at a thug and the guns fire riot rounds that knock them out. The Batmobile has to be in the city.
@@ -32,9 +36,22 @@ the car.
 - While flying, hover over the Batmobile to hook it and press again to drop it. Dropped from high up it wrecks
   what it lands on.
 
+**Waypoint marker.** Your map waypoint, or the mission marker, shows on the flight HUD with how far away it is.
+
+## Controller
+
+Hold **LB + RB** for the command wheel. Point a stick at a command and let go to use it. The wheel has the call,
+remote control, escort, strike, lift and the settings deck. While the wheel buttons are held you can also tap **Y** to
+call, **A** for remote, **B** for the escort, **X** to strike or **D-pad down** for the lift without opening the wheel.
+
+The pad rumbles with the guns, hits, the afterburner and landings. Every flight button can be changed in the settings
+deck, along with aim speed, aim response, stick deadzone, inverted pitch and swapped sticks. Prompts can show Xbox or
+PlayStation buttons.
+
 ## Controls
 
-These are the defaults. Every mod key can be changed in the settings menu.
+These are the defaults. Every key and button can be changed in the settings deck. Pick a key that's already used and
+the two swap over.
 
 | Key | What it does |
 |---|---|
@@ -43,7 +60,7 @@ These are the defaults. Every mod key can be changed in the settings menu.
 | **I** | Escort on or off |
 | **T** | Strike, hold to mark several targets |
 | **O** | Lift, fetch, hook or drop the Batmobile |
-| **F4** | Settings menu |
+| **F4** | Settings deck |
 
 In the cockpit:
 
@@ -53,6 +70,7 @@ In the cockpit:
 | W A S D | Left stick | Fly in hover, throttle and roll on the wings |
 | Space / Ctrl | RT / LT | Up and down in hover |
 | Shift / Ctrl | RT / LT | Afterburner and air brake on the wings |
+| Shift | Left stick click | Fast in hover |
 | F | Y | Switch between hover and wings |
 | Left mouse | X | Vulcan gun |
 | Q | RB | Cannon |
@@ -61,22 +79,18 @@ In the cockpit:
 | C | D-pad up | Camera |
 | O | D-pad down | Hook or drop the Batmobile |
 | E | B | Bail out |
-| H | | Hide the key hints |
-
-On a controller hold **LB + RB** to open the settings menu. Remote control, escort and the lift can be started from
-there.
+| H | | Show or hide the key hints |
 
 ## Settings
 
-Press **F4** for the settings menu. It covers flight assist, top speed, crashes, hover drift, camera, the HUD and its
-colour, weapons, controls and the Batmobile options. If the HUD text is too small, turn up **HUD SIZE** under DISPLAY.
-**DECK SIZE** under SYSTEM does the same for the menu. Your choices are saved to `settings.toml` in the mod folder, so
-updating the mod doesn't reset them.
+Press **F4**, or pick SETTINGS on the command wheel. The pages are FLIGHT, BATMOBILE, WEAPONS, KEYBOARD, CONTROLLER,
+DISPLAY and SYSTEM. If the HUD text is too small, turn up **HUD SIZE** under DISPLAY. **HUD LAYOUT** set to MINIMAL
+keeps the aim, speed, height and warnings and clears the rest. **DECK SIZE** under SYSTEM does the same for the deck.
+Your choices are saved to `settings.toml` in the mod folder, so updating the mod doesn't reset them.
 
-By default Batman raises his gauntlet and the menu shows on its hologram. In the Batmobile it shows over the dashboard
-and the car stops. While flying, gliding, fighting, in battle mode or by remote it opens on the screen instead. Set
-**OPEN DECK ON** under SYSTEM to SCREEN to always have it on the screen. **GAUNTLET SIZE** makes the hologram bigger
-and its text smaller so more fits, and **GAUNTLET TEXT** sizes the text on top of that.
+By default Batman raises his gauntlet and the deck shows on its hologram. In the Batmobile it shows over the dashboard
+and the car stops. While flying, gliding or fighting it opens on the screen instead. Set **OPEN DECK ON** under SYSTEM
+to SCREEN to always have it on the screen.
 
 ## Install
 
@@ -93,4 +107,4 @@ The Batwing only works out in the open city, not in interiors or during cutscene
 ## Bug reports
 
 The mod writes `Batwing.log` in its folder. For a bug report turn on **DIAGNOSTICS** under SYSTEM in the settings
-menu, make it happen again and attach the log.
+deck, make it happen again and attach the log.

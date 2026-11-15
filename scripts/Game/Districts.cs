@@ -5,17 +5,18 @@ using BmSDK.BmGame;
 
 namespace Trinity.Batwing;
 
+// The city's district volumes. The game only keeps the ones near Batman loaded, so at Batwing speed we fly
+// out of them, and the table below says where we are when no loaded volume does.
 internal static class Districts
 {
     public readonly record struct Cell(string Name, Vector3 Min, Vector3 Max);
 
     private const double RefreshSeconds = 2.0;
 
-    // Main district boxes, taken from the game's district volumes. The game only keeps the volumes near
-    // Batman loaded, so at Batwing speed we fly out of them and need this to know where we are.
+    // Main district boxes, taken from the game's district volumes.
     private static readonly Cell[] Map =
     {
-        new("CityX_01", new(-106496f, -88064f, -253952f), new(-94208f, -75776f, 253952f)),
+        new("CityX_01", new(-94208f, -81920f, -253952f), new(-81920f, -69632f, 253952f)),
         new("CityX_02", new(-94208f, -69632f, -253952f), new(-81920f, -57344f, 253952f)),
         new("CityX_03", new(-94208f, -57344f, -253952f), new(-81920f, -16202f, 253952f)),
         new("CityX_04", new(-106496f, -88064f, -253952f), new(-94208f, -75776f, 253952f)),
@@ -83,22 +84,25 @@ internal static class Districts
 
     private static readonly Dictionary<string, Cell> _map = Map.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
-    // Boxes of loaded volumes not in the map, the small special areas inside districts.
+    public static readonly Vector3 Low = Map.Aggregate(new Vector3(float.MaxValue), (low, c) => Vector3.Min(low, c.Min));
+    public static readonly Vector3 High = Map.Aggregate(new Vector3(float.MinValue), (high, c) => Vector3.Max(high, c.Max));
+
+    // Boxes measured off loaded volumes. They beat the table, and cover the small special areas it leaves out.
     private static readonly Dictionary<string, Cell> _seen = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Cell> _live = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, FName> _names = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly List<(RLevelVolume Volume, string Name)> _volumes = new();
+    private static readonly List<(RLevelVolume Volume, string Name, bool Main)> _volumes = new();
     private static Every _refresh;
 
-    private static readonly Regex Main = new(@"^City[XYZ]_\d\d$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex MainName = new(@"^City[XYZ]_\d\d$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    public static bool IsDistrict(string name) => Main.IsMatch(name);
-
+    // The loaded district volume holding the point, or null outside the loaded city.
     public static string? At(Vector3 point)
     {
         Refresh();
         RLevelVolume? best = null;
         string? name = null;
-        foreach ((RLevelVolume v, string n) in _volumes)
+        foreach ((RLevelVolume v, string n, _) in _volumes)
         {
             if (v is { IsValid: true } && v.EncompassesPoint(point) && (best == null || v.Priority > best.Priority))
             {
@@ -110,17 +114,18 @@ internal static class Districts
         return name;
     }
 
+    // The district under the point, loaded or not.
     public static string? Under(Vector3 point) => Scan(point) ?? Mapped(point);
 
+    // A loaded district under the point at any height. Volumes don't reach as high as the Batwing flies.
     public static string? Scan(Vector3 point)
     {
-        string? at = At(point);
-        if (at != null)
+        if (At(point) is { } at)
             return at;
 
         RLevelVolume? best = null;
         string? name = null;
-        foreach ((RLevelVolume v, string n) in _volumes)
+        foreach ((RLevelVolume v, string n, _) in _volumes)
         {
             if (!v.IsValid || !Box(n, out Cell c) || !Inside(c, point))
                 continue;
@@ -141,9 +146,9 @@ internal static class Districts
     {
         string? best = null;
         float bestArea = float.MaxValue;
-        foreach (Cell c in Map)
+        foreach (Cell listed in Map)
         {
-            if (!Inside(c, point))
+            if (!Box(listed.Name, out Cell c) || !Inside(c, point))
                 continue;
 
             float area = (c.Max.X - c.Min.X) * (c.Max.Y - c.Min.Y);
@@ -163,9 +168,9 @@ internal static class Districts
         Refresh();
         string? best = null;
         float bestDist = float.MaxValue;
-        foreach ((RLevelVolume v, string n) in _volumes)
+        foreach ((RLevelVolume v, string n, bool main) in _volumes)
         {
-            if (!v.IsValid || !IsDistrict(n) || !Box(n, out Cell c))
+            if (!v.IsValid || !main || !Box(n, out Cell c))
                 continue;
 
             float dx = MathF.Max(0f, MathF.Max(c.Min.X - point.X, point.X - c.Max.X));
@@ -181,7 +186,13 @@ internal static class Districts
         return best;
     }
 
-    private static bool Box(string name, out Cell c) => _map.TryGetValue(name, out c) || _seen.TryGetValue(name, out c);
+    // Outside the whole city by more than the margin, flat.
+    public static bool Outside(Vector3 at, float margin) =>
+        at.X < Low.X - margin || at.X > High.X + margin || at.Y < Low.Y - margin || at.Y > High.Y + margin;
+
+    public static Vector3 Middle => (Low + High) * 0.5f;
+
+    private static bool Box(string name, out Cell c) => _seen.TryGetValue(name, out c) || _map.TryGetValue(name, out c);
 
     private static bool Inside(Cell c, Vector3 p) => p.X >= c.Min.X && p.X <= c.Max.X && p.Y >= c.Min.Y && p.Y <= c.Max.Y;
 
@@ -195,26 +206,13 @@ internal static class Districts
     public static RLevelVolume? Volume(string level)
     {
         Refresh();
-        foreach ((RLevelVolume v, string name) in _volumes)
+        foreach ((RLevelVolume v, string name, _) in _volumes)
         {
             if (v is { IsValid: true } && name.Equals(level, StringComparison.OrdinalIgnoreCase))
                 return v;
         }
 
         return null;
-    }
-
-    public static bool Outline(out Vector3 min, out Vector3 max)
-    {
-        min = new Vector3(float.MaxValue);
-        max = new Vector3(float.MinValue);
-        foreach (Cell c in Map)
-        {
-            min = Vector3.Min(min, c.Min);
-            max = Vector3.Max(max, c.Max);
-        }
-
-        return true;
     }
 
     public static void Forget()
@@ -232,24 +230,59 @@ internal static class Districts
         try
         {
             _volumes.Clear();
+            _live.Clear();
+            if (World.Ri is not { } ri)
+                return;
+
             foreach (RLevelVolume v in World.All<RLevelVolume>())
             {
                 string name = v.Level.ToString();
                 if (name.Length == 0 || name == "None" || !name.StartsWith("City", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                _volumes.Add((v, name));
-                if (_map.ContainsKey(name) || _seen.ContainsKey(name))
+                // A volume outlives its level until the next collection. It can't be entered then, and it
+                // would stand in front of the fresh volume when its district loads again.
+                if (!Ground.Standing(ri, v))
                     continue;
 
+                _volumes.Add((v, name, MainName.IsMatch(name)));
                 v.GetComponentsBoundingBox(out GameObject.FBox box);
-                if (box.IsValid != 0)
-                    _seen[name] = new Cell(name, box.Min, box.Max);
+                if (box.IsValid == 0)
+                    continue;
+
+                // A district can be made of more than one volume.
+                _live[name] = _live.TryGetValue(name, out Cell part)
+                    ? new Cell(name, Vector3.Min(part.Min, box.Min), Vector3.Max(part.Max, box.Max))
+                    : new Cell(name, box.Min, box.Max);
             }
+
+            foreach (Cell now in _live.Values)
+                Learn(now);
         }
         catch (Exception ex)
         {
             Log.Throttled("districts", "Districts: failed to read district volumes: " + ex.Message);
         }
     }
+
+    private static void Learn(Cell now)
+    {
+        if (_seen.TryGetValue(now.Name, out Cell had))
+        {
+            Cell both = new(now.Name, Vector3.Min(had.Min, now.Min), Vector3.Max(had.Max, now.Max));
+            if (both == had)
+                return;
+            now = both;
+        }
+
+        _seen[now.Name] = now;
+        if (_map.TryGetValue(now.Name, out Cell listed) && !SameGround(listed, now))
+        {
+            Log.Detail("Districts: " + now.Name + " measures " + Geo.Position(now.Min) + " to " + Geo.Position(now.Max)
+                + ", the table has " + Geo.Position(listed.Min) + " to " + Geo.Position(listed.Max) + ".");
+        }
+    }
+
+    private static bool SameGround(Cell a, Cell b) =>
+        MathF.Abs(a.Min.X - b.Min.X) < 1f && MathF.Abs(a.Min.Y - b.Min.Y) < 1f && MathF.Abs(a.Max.X - b.Max.X) < 1f && MathF.Abs(a.Max.Y - b.Max.Y) < 1f;
 }

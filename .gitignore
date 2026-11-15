@@ -1,6 +1,7 @@
 # Made by the mod on the player's machine, never shipped
 *.log
 settings.toml
+*.tmp
 
 # Build output from local compile checks
 bin/

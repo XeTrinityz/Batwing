@@ -2,108 +2,158 @@ using System.Numerics;
 
 namespace Trinity.Batwing;
 
-internal struct FlightInput
+internal enum Assist
 {
-    public Vector3 Aim;
-
-    public Vector3 Stick;
-
-    public bool Direct;
-
-    public float Roll;
-
-    public float Throttle;
-
-    public bool Boost;
-
-    public float Brake;
-
-    public Vector2 Move;
-
-    public float Lift;
-
-    public float Heading;
-
-    public bool Assist;
+    Off,
+    Standard,
+    Full,
 }
 
+// What the pilot, or an autopilot, asks of the flight model for one step.
+internal struct FlightInput
+{
+    // Where mouse aim wants the flight path to go. Zero means no aim.
+    public Vector3 Aim;
+
+    // Direct control on the wings: roll, pitch and yaw, -1 to 1.
+    public Vector3 Stick;
+    public bool Direct;
+
+    // Manual roll on top of mouse aim, -1 to 1.
+    public float Roll;
+
+    // How fast to move the throttle, -1 to 1.
+    public float Throttle;
+    public bool Boost;
+    public float Brake;
+
+    // Hover: sideways and forward, -1 to 1. An autopilot may ask for more.
+    public Vector2 Move;
+
+    // Hover: climb or sink, -1 to 1. An autopilot may ask for more.
+    public float Lift;
+
+    // Hover: the heading to turn to, radians.
+    public float Heading;
+
+    // Hover: hold the spot and height it stopped at while the sticks are centred.
+    public bool Hold;
+
+    public Assist Assist;
+}
+
+// The Batwing's physics. It knows nothing about the game, so it can be run and tested on its own.
+// Unreal units, centimetres and seconds. Body rates are roll, pitch and yaw, positive for right wing
+// down, nose up and nose right.
 internal sealed class FlightModel
 {
-    public float Gravity = 1100f;
-
-    public float TopSpeed = 9000f;
-
-    public float ThrustToWeight = 1.25f;
-    public float BoostThrust = 2.0f;
-
-    public float StallSpeed = 2600f;
-
+    public const float Gravity = 1100f;
+    public const float StallSpeed = 2600f;
     public const float StallAngle = 0.30f;
+    public const float HoverSpeed = 2600f;
+    public const float ClimbSpeed = 1300f;
+    public const float GLimit = 9f;
 
-    public float InducedDrag = 3.2e-4f;
-    public float SideForce = 2.2e-4f;
-    public float SideDrag = 1.2e-3f;
-    public float BrakeDrag = 2.2e-5f;
-    public float GLimit = 9f;
+    private const float NegativeGLimit = 3.5f;
+    private const float ThrustToWeight = 1.25f;
+    private const float BoostThrust = 2.0f;
+    private const float InducedDrag = 3.2e-4f;
+    private const float SideForce = 2.2e-4f;
+    private const float SideDrag = 1.2e-3f;
+    private const float BrakeDrag = 2.2e-5f;
+    private const float MaxTilt = 0.55f;
+    private const float ModeSeconds = 1.3f;
+    private const float BoostSeconds = 5.5f;
+    private const float RefillSeconds = 9f;
+    private const float RefillDelay = 1.2f;
+    private const float SubStep = 1f / 120f;
 
-    public float NegativeGLimit = 3.5f;
+    // Mouse aim. The flight path turns towards the aim, the wings roll the lift round to where the turn
+    // needs it, and the nose holds the angle of attack that lift takes.
+    private const float PathGain = 1.7f;
+    private const float RollGain = 4f;
+    private const float RollDamp = 0.3f;
+    private const float AlphaGain = 3.5f;
+    private const float SlipGain = 3.5f;
+    private const float TurnShare = 0.8f;
 
-    public float HoverSpeed = 2600f;
-    public float ClimbSpeed = 1300f;
+    // Corrections under the first angle are flat, over the second fully banked. Radians.
+    private const float SkidBelow = 0.03f;
+    private const float SkidFull = 0.14f;
+    private const float SkidMost = 0.1f;
 
-    public float MaxTilt = 0.55f;
+    // From the first angle off the aim big turns lean towards flat, by the second they're flat. Radians.
+    private const float FlatFrom = 1.6f;
+    private const float FlatFull = 2.4f;
 
-    public float ModeSeconds = 1.3f;
+    // Under this the wings can't turn the path, so mouse aim points the nose instead.
+    private const float PathFrom = StallSpeed * 0.4f;
+    private const float PathFull = StallSpeed;
 
-    public float AimPitchGain = 2.4f;
-    public float AimDamping = 0.5f;
-    public float AimRollGain = 3f;
+    private const float LevelGain = 2.5f;
 
-    public float AimTurnGain = 0.8f;
-
-    public float MaxAimBank = 1.3f;
-
-    public float BoostSeconds = 5.5f;
-    public float RefillSeconds = 9f;
+    // Hover station keeping, the spring back to the held spot and height.
+    private const float HoldSpring = 1.2f;
+    private const float HoldPullMost = 600f;
+    private const float HoldTakeBelow = 150f;
+    private const float HeightSpring = 1.6f;
+    private const float HeightPullMost = 400f;
 
     private static readonly Vector3 WingRates = new(3.6f, 1.45f, 0.6f);
     private static readonly Vector3 HoverRates = new(1.3f, 1.3f, 1.5f);
-    private static readonly Vector3 SpinUp = new(0.16f, 0.24f, 0.36f);
+
+    // How long the rates take to follow what's asked, roll, pitch and yaw.
+    private static readonly Vector3 SpinUp = new(0.12f, 0.18f, 0.22f);
+
+    public float TopSpeed = 9000f;
 
     public Vector3 Position;
     public Vector3 Velocity;
     public Vector3 Forward = Vector3.UnitX;
     public Vector3 Right = Vector3.UnitY;
     public Vector3 Up = Vector3.UnitZ;
-
     public Vector3 Rates;
 
     public float Throttle = 0.7f;
 
+    // 0 on the wings, 1 in hover, eased between them.
     public float Hover;
-
     public bool HoverWanted;
     public float Fuel = 1f;
-    public bool Boosting;
 
+    public bool Boosting { get; private set; }
     public float Airspeed { get; private set; }
     public float Alpha { get; private set; }
     public float Beta { get; private set; }
     public float GLoad { get; private set; } = 1f;
     public bool Stalled { get; private set; }
 
+    // How hard the lift jets work, 1 holds the weight.
     public float Jets { get; private set; }
 
+    // Main engine output for the exhaust and sound, 0 to about 1.6.
     public float Engine { get; private set; }
 
+    // How long it has been slow on the wings with the throttle back. Full assist drops into hover after a while.
     public float SlowFor { get; private set; }
 
     private float _sinceBoost = 99f;
-    private float _rollSide = 1f;
+    private float _thrust;
+    private float _turnSide = 1f;
+    private Vector3 _pathSpin;
+    private Vector3 _lastDir = Vector3.UnitX;
+    private Vector3? _holdAt;
+    private float? _holdZ;
 
     private float Drag0 => ThrustToWeight * Gravity / (TopSpeed * TopSpeed);
 
-    private float LiftSlope => Gravity / (StallSpeed * StallSpeed * StallAngle);
+    private static float LiftSlope => Gravity / (StallSpeed * StallSpeed * StallAngle);
+
+    public float Bank() => MathF.Atan2(-Right.Z, Up.Z);
+
+    public float Pitch() => MathF.Asin(Math.Clamp(Forward.Z, -1f, 1f));
+
+    public float Yaw() => MathF.Atan2(Forward.Y, Forward.X);
 
     public void Step(float dt, in FlightInput input)
     {
@@ -111,41 +161,83 @@ internal sealed class FlightModel
             return;
 
         dt = MathF.Min(dt, 0.1f);
-        int steps = Math.Max(1, (int)MathF.Ceiling(dt / (1f / 120f)));
+        int steps = Math.Max(1, (int)MathF.Ceiling(dt / SubStep));
         float h = dt / steps;
         for (int i = 0; i < steps; i++)
             Substep(h, input);
     }
 
+    public void Place(Vector3 at, float yaw, Vector3 velocity)
+    {
+        Position = at;
+        Velocity = velocity;
+        Forward = new Vector3(MathF.Cos(yaw), MathF.Sin(yaw), 0f);
+        Right = new Vector3(-Forward.Y, Forward.X, 0f);
+        Up = Vector3.UnitZ;
+        Rates = Vector3.Zero;
+        _lastDir = velocity.LengthSquared() > 1f ? Vector3.Normalize(velocity) : Forward;
+        _pathSpin = Vector3.Zero;
+        Release();
+    }
+
+    public void Orient(Vector3 forward, Vector3 right, Vector3 up)
+    {
+        Forward = forward;
+        Right = right;
+        Up = up;
+        Orthonormalise();
+    }
+
+    // Lets go of the held hover spot, for when something else moved it.
+    public void Release()
+    {
+        _holdAt = null;
+        _holdZ = null;
+    }
+
+    // Bounces off a surface with normal n. Returns how fast it was going into it.
+    public float Bump(Vector3 n, float bounce, float friction)
+    {
+        float into = Vector3.Dot(Velocity, n);
+        if (into >= 0f)
+            return 0f;
+
+        Vector3 slide = Velocity - n * into;
+        Velocity = slide * friction - n * (into * bounce);
+        Release();
+
+        float kick = Math.Clamp(-into / 3000f, 0f, 1.5f);
+        Rates.Y += Vector3.Dot(n, Up) * kick * 1.5f;
+        Rates.Z -= Vector3.Dot(n, Right) * kick * 1.2f;
+        Rates.X += (Vector3.Dot(n, Right) >= 0f ? -1f : 1f) * kick * 2f;
+        return -into;
+    }
+
     private void Substep(float dt, in FlightInput input)
     {
-        float target = HoverWanted ? 1f : 0f;
-        Hover = Approach(Hover, target, dt / ModeSeconds);
-        float hover = Ease(Hover);
+        Hover = Approach(Hover, HoverWanted ? 1f : 0f, dt / ModeSeconds);
+        float hover = Smooth(Hover);
         float wings = 1f - hover;
 
         Throttle = Math.Clamp(Throttle + input.Throttle * 0.7f * dt, 0f, 1f);
         UpdateFuel(dt, input.Boost && hover < 0.5f);
 
         Vector3 accel = new(0f, 0f, -Gravity);
-        accel += Aero(input.Brake, wings, out Vector3 aero);
+        accel += Aero(input.Brake, wings);
         float thrust = ThrustToWeight * Gravity * Throttle * (Boosting ? BoostThrust : 1f);
-        accel += Forward * (thrust * wings);
+        _thrust = thrust * wings;
+        accel += Forward * _thrust;
         Engine = Throttle * (Boosting ? 1.6f : 1f) * wings;
 
-        Vector3 rateCmd;
+        Vector3 rateCmd = Vector3.Zero;
+        Jets = 0f;
         if (hover > 0.001f)
-        {
-            accel += HoverPush(dt, input, hover, out Vector3 hoverRates);
-            rateCmd = hoverRates;
-        }
+            accel += HoverPush(input, hover, out rateCmd);
         else
-        {
-            Jets = 0f;
-            rateCmd = Vector3.Zero;
-        }
+            Release();
 
-        if (input.Assist && wings > 0.001f)
+        // Below stall speed with assist on, the lift jets take some of the weight so it sinks instead of dropping.
+        if (input.Assist != Assist.Off && wings > 0.001f)
         {
             float support = Math.Clamp(1f - Airspeed / (StallSpeed * 1.15f), 0f, 1f);
             support *= support * 0.85f;
@@ -164,10 +256,19 @@ internal sealed class FlightModel
         Velocity += accel * dt;
         Position += Velocity * dt;
 
+        // How fast the flight path itself is turning, for the stall protection.
+        float moving = Velocity.Length();
+        if (moving > 1f)
+        {
+            Vector3 dir = Velocity / moving;
+            _pathSpin = Vector3.Cross(_lastDir, dir) / dt;
+            _lastDir = dir;
+        }
+
         Vector3 felt = accel + new Vector3(0f, 0f, Gravity);
         GLoad = Vector3.Dot(felt, Up) / Gravity;
 
-        bool slow = input.Assist && !HoverWanted && Airspeed < StallSpeed && Throttle < 0.3f;
+        bool slow = input.Assist == Assist.Full && !HoverWanted && Airspeed < StallSpeed && Throttle < 0.3f;
         SlowFor = slow ? SlowFor + dt : 0f;
     }
 
@@ -182,13 +283,12 @@ internal sealed class FlightModel
         }
 
         _sinceBoost += dt;
-        if (_sinceBoost > 1.2f)
+        if (_sinceBoost > RefillDelay)
             Fuel = MathF.Min(1f, Fuel + dt / RefillSeconds);
     }
 
-    private Vector3 Aero(float brake, float wings, out Vector3 lift)
+    private Vector3 Aero(float brake, float wings)
     {
-        lift = Vector3.Zero;
         float speed = Velocity.Length();
         Airspeed = speed;
         if (speed < 1f)
@@ -204,16 +304,14 @@ internal sealed class FlightModel
         Beta = MathF.Atan2(Vector3.Dot(Velocity, Right), along);
         float q = speed * speed;
 
+        // Lift grows with the angle up to the stall, then falls away.
         float a = MathF.Abs(Alpha);
         float cl = a <= StallAngle ? a : StallAngle * MathF.Max(0.25f, 1f - (a - StallAngle) * 2.2f);
         Stalled = a > StallAngle * 1.1f && speed > 300f && wings > 0.5f;
-        Vector3 liftDir = Across(Up, dir);
-        lift = liftDir * (LiftSlope * q * cl * MathF.Sign(Alpha));
+        Vector3 lift = Across(Up, dir) * (LiftSlope * q * cl * MathF.Sign(Alpha));
 
         float b = Math.Clamp(Beta, -0.6f, 0.6f);
-        Vector3 sideDir = Across(Right, dir);
-        lift -= sideDir * (SideForce * q * MathF.Sin(b));
-
+        lift -= Across(Right, dir) * (SideForce * q * MathF.Sin(b));
         lift *= 1f - 0.7f * (1f - wings);
 
         float up = Vector3.Dot(lift, Up);
@@ -225,89 +323,146 @@ internal sealed class FlightModel
         float sa = MathF.Sin(MathF.Min(a, 1.2f));
         float sb = MathF.Sin(MathF.Abs(b));
         float cd = Drag0 + InducedDrag * sa * sa + SideDrag * sb * sb + BrakeDrag * Math.Clamp(brake, 0f, 1f);
-        Vector3 drag = -dir * (q * cd);
-        return lift + drag;
-    }
-
-    private static Vector3 Across(Vector3 axis, Vector3 dir)
-    {
-        Vector3 v = axis - dir * Vector3.Dot(axis, dir);
-        float l = v.Length();
-        return l > 1e-4f ? v / l : Vector3.Zero;
+        return lift - dir * (q * cd);
     }
 
     private Vector3 AimRates(in FlightInput input)
     {
-        Vector3 aim = input.Aim;
-        float bank = Bank();
-        if (aim.LengthSquared() < 0.5f)
-            return Clamp(new Vector3(-bank * 2.5f + input.Roll * WingRates.X, 0f, 0f), WingRates);
-
-        float dx = Vector3.Dot(aim, Forward);
-        float dy = Vector3.Dot(aim, Right);
-        float dz = Vector3.Dot(aim, Up);
-
-        float flying = Math.Clamp((Airspeed - StallSpeed * 0.5f) / StallSpeed, 0f, 1f);
-        float alpha = Math.Clamp(Alpha, -StallAngle, StallAngle) * flying;
-        float beta = Math.Clamp(Beta, -0.3f, 0.3f) * flying;
-        float q = AirflowPull();
-        float pitch = AimPitchGain * (MathF.Atan2(dz, dx) + alpha) - AimDamping * Rates.Y + 5f * q * Alpha * SpinUp.Y;
-        if (pitch < 0f)
-            pitch *= 0.6f;
-        float yaw = 1.4f * (MathF.Atan2(dy, dx) - beta) - AimDamping * Rates.Z - 4f * q * Beta * SpinUp.Z;
-
-        if (MathF.Abs(dy) > 0.02f)
-            _rollSide = MathF.Sign(dy);
-        Vector3 heading = Airspeed > 500f ? Velocity : Forward;
-        float roll;
-        if (dz + 0.8f < 0f)
+        Vector3 rates;
+        if (input.Aim.LengthSquared() < 0.5f)
         {
-            float lateral = MathF.Abs(dy) < 0.02f ? 0.02f * _rollSide : dy;
-            roll = AimRollGain * MathF.Atan2(lateral, dz + 0.8f);
+            rates = new Vector3(Level(input.Assist), 0f, 0f);
         }
         else
         {
-            float turnErr = FlatAngle(heading, aim);
-            float speed = MathF.Max(Airspeed, StallSpeed);
-            float mostRate = GLimit * 0.75f * Gravity / speed;
-            float turnRate = Math.Clamp(turnErr * AimTurnGain, -mostRate, mostRate);
-            float wantBank = Math.Clamp(MathF.Atan(turnRate * speed / Gravity), -MaxAimBank, MaxAimBank);
-            roll = AimRollGain * WrapPi(wantBank - bank) - 0.25f * Rates.X;
+            Vector3 aim = Vector3.Normalize(input.Aim);
+            float path = Math.Clamp((Airspeed - PathFrom) / (PathFull - PathFrom), 0f, 1f);
+            Vector3 nose = NoseRates(aim);
+            rates = path <= 0f ? nose : Vector3.Lerp(nose, PathRates(aim, input.Assist), Smooth(path));
         }
 
-        // Blend toward manual roll so a light touch on a stick doesn't throw away the auto bank.
+        // Leaning on the roll keys takes over the roll bit by bit, so a light touch keeps the auto bank.
         float manual = Math.Clamp((MathF.Abs(input.Roll) - 0.1f) / 0.4f, 0f, 1f);
-        roll += (input.Roll * WingRates.X - roll) * manual;
+        rates.X += (input.Roll * WingRates.X - rates.X) * manual;
+        return Limit(Clamp(rates, WingRates), input.Assist);
+    }
 
-        return Limit(Clamp(new Vector3(roll, pitch, yaw), WingRates), input.Assist);
+    // Points the nose at the aim, for when it's too slow to turn on its wings.
+    private Vector3 NoseRates(Vector3 aim)
+    {
+        float dx = Vector3.Dot(aim, Forward);
+        float dy = Vector3.Dot(aim, Right);
+        float dz = Vector3.Dot(aim, Up);
+        return new Vector3(-Bank() * LevelGain, 2.2f * MathF.Atan2(dz, dx), 1.6f * MathF.Atan2(dy, dx));
+    }
+
+    private Vector3 PathRates(Vector3 aim, Assist assist)
+    {
+        float speed = MathF.Max(Airspeed, 1f);
+        Vector3 d = Velocity / speed;
+        float cos = Math.Clamp(Vector3.Dot(d, aim), -1f, 1f);
+        float err = MathF.Acos(cos);
+        Vector3 n = aim - d * cos;
+        float nl = n.Length();
+        n = nl > 1e-4f ? n / nl : Vector3.Zero;
+
+        // Far off the aim the shortest way round can be a loop, and with the aim right behind it flips
+        // between loops and turns. A flat turn is what's wanted, so big turns lean that way.
+        float flatten = Smooth((err - FlatFrom) / (FlatFull - FlatFrom)) * (1f - MathF.Abs(aim.Z));
+        if (flatten > 0f && Flat(d) is { } heading && Flat(aim) is { } toward)
+        {
+            float cross = heading.X * toward.Y - heading.Y * toward.X;
+            if (MathF.Abs(cross) > 0.02f)
+                _turnSide = MathF.Sign(cross);
+            Vector3 level = new Vector3(-heading.Y, heading.X, 0f) * _turnSide;
+            level -= d * Vector3.Dot(level, d);
+            if (level.LengthSquared() > 1e-4f)
+                n = Vector3.Normalize(Vector3.Lerp(n, Vector3.Normalize(level), flatten));
+        }
+
+        // How fast the path should turn, no more than the wings can pull at this speed.
+        float most = GLimit * TurnShare * Gravity / MathF.Max(speed, StallSpeed);
+        float turn = MathF.Min(err * PathGain, most);
+
+        // Small corrections slide the nose across with the rudder instead of banking, the way you'd line
+        // up a shot. Bigger ones bank into the turn.
+        Vector3 bend = n * (speed * turn);
+        Vector3 side = Right - d * Vector3.Dot(Right, d);
+        float sideLength = side.Length();
+        float wantBeta = 0f;
+        if (sideLength > 1e-3f)
+        {
+            side /= sideLength;
+            float flat = 1f - Smooth((err - SkidBelow) / (SkidFull - SkidBelow));
+            float sideways = Vector3.Dot(bend, side) * flat;
+            bend -= side * sideways;
+            wantBeta = Math.Clamp(-sideways / (SideForce * speed * speed), -SkidMost, SkidMost);
+        }
+
+        // The lift that bends the path that much and holds it up against gravity.
+        var g = new Vector3(0f, 0f, -Gravity);
+        Vector3 lift = bend - (g - d * Vector3.Dot(d, g));
+        Vector3 across = lift - Forward * Vector3.Dot(lift, Forward);
+        float size = across.Length();
+        float roll = MathF.Atan2(Vector3.Dot(across, Right), Vector3.Dot(across, Up));
+
+        // Lift wanted under the wings. Upright and asking for a light push, it pushes rather than rolling over.
+        float sign = 1f;
+        if (MathF.Abs(roll) > MathF.PI * 0.5f && lift.Z <= 0f && Up.Z > 0f && size < NegativeGLimit * Gravity * 0.7f)
+        {
+            roll -= MathF.PI * MathF.Sign(roll);
+            sign = -1f;
+        }
+
+        // Only pulls as hard as the wings are rolled round to where the lift has to go.
+        // The engine pushes along the nose, so with the nose up it gives some lift as well.
+        float lined = MathF.Max(0f, MathF.Cos(roll));
+        float wantAlpha = sign * size * lined / (LiftSlope * speed * speed + _thrust);
+        float top = assist == Assist.Off ? StallAngle * 1.6f : StallAngle * 0.9f;
+        wantAlpha = Math.Clamp(wantAlpha, -top * 0.7f, top);
+
+        // The body turns with the path, as far as the wings are rolled in to turn it, plus what it takes to fix
+        // the roll, the angle of attack and the slip. The airflow's own pull on the nose is cancelled out, or
+        // the nose would settle a little off where it's asked.
+        Vector3 spin = Vector3.Cross(d, n) * (turn * lined);
+        float pull = AirflowPull();
+        float p = -Vector3.Dot(spin, Forward) + RollGain * roll - RollDamp * Rates.X;
+        float q = -Vector3.Dot(spin, Right) + AlphaGain * (wantAlpha - Alpha) + 5f * pull * Alpha * SpinUp.Y;
+        float r = Vector3.Dot(spin, Up) + SlipGain * (Beta - wantBeta) - 4f * pull * Beta * SpinUp.Z;
+        return new Vector3(p, q, r);
     }
 
     private Vector3 StickRates(in FlightInput input)
     {
         Vector3 rates = input.Stick * WingRates;
-        if (input.Assist && MathF.Abs(input.Stick.X) < 0.05f)
-            rates.X = -Bank() * 2f;
+        if (input.Assist == Assist.Full && MathF.Abs(input.Stick.X) < 0.05f)
+            rates.X = Level(input.Assist);
+
+        // Assist keeps the turn coordinated, so the rudder isn't needed to stop it skidding.
+        if (input.Assist != Assist.Off && MathF.Abs(input.Stick.Z) < 0.05f)
+            rates.Z += SlipGain * Beta * Math.Clamp((Airspeed - PathFrom) / (PathFull - PathFrom), 0f, 1f);
+
         return Limit(Clamp(rates, WingRates), input.Assist);
     }
 
-    private Vector3 Limit(Vector3 rates, bool assist)
+    private float Level(Assist assist) => assist == Assist.Full ? -Bank() * LevelGain : 0f;
+
+    // Stall protection. The pitch is held to what keeps the angle of attack under the stall, and past it
+    // the nose is pushed back down, since a falling path raises the angle of attack with no pitch at all.
+    private Vector3 Limit(Vector3 rates, Assist assist)
     {
-        if (!assist)
+        if (assist == Assist.Off || Airspeed < 300f)
             return rates;
 
-        float edge = StallAngle * 0.8f;
-        if (rates.Y > 0f && Alpha > edge)
-            rates.Y *= Math.Clamp((StallAngle - Alpha) / (StallAngle - edge), 0f, 1f);
-        else if (rates.Y < 0f && Alpha < -edge)
-            rates.Y *= Math.Clamp((StallAngle + Alpha) / (StallAngle - edge), 0f, 1f);
+        float edge = StallAngle * 0.85f;
+        float follow = -Vector3.Dot(_pathSpin, Right);
+        float most = follow + AlphaGain * (edge - Alpha);
+        float least = follow + AlphaGain * (-edge * 0.7f - Alpha);
+        rates.Y = Math.Clamp(rates.Y, MathF.Min(least, most), MathF.Max(least, most));
         return rates;
     }
 
-    public float Bank() => MathF.Atan2(-Right.Z, Up.Z);
-
-    public float Pitch() => MathF.Asin(Math.Clamp(Forward.Z, -1f, 1f));
-
-    private Vector3 HoverPush(float dt, in FlightInput input, float hover, out Vector3 rates)
+    private Vector3 HoverPush(in FlightInput input, float hover, out Vector3 rates)
     {
         var face = new Vector3(MathF.Cos(input.Heading), MathF.Sin(input.Heading), 0f);
         var side = new Vector3(-face.Y, face.X, 0f);
@@ -315,6 +470,20 @@ internal sealed class FlightModel
         Vector3 wantFlat = (face * input.Move.Y + side * input.Move.X) * speed;
         var flat = new Vector3(Velocity.X, Velocity.Y, 0f);
 
+        // With the sticks centred it takes the spot it came to rest on, and holds it against any drift.
+        bool still = input.Hold && input.Move.LengthSquared() < 1e-4f;
+        if (!still)
+            _holdAt = null;
+        else if (_holdAt == null && flat.Length() < HoldTakeBelow)
+            _holdAt = Position;
+        if (_holdAt is { } spot)
+        {
+            var back = new Vector3(spot.X - Position.X, spot.Y - Position.Y, 0f) * HoldSpring;
+            float pull = back.Length();
+            wantFlat += pull > HoldPullMost ? back * (HoldPullMost / pull) : back;
+        }
+
+        // Leans into the way it wants to go. Past the most it can lean, braking gets help from the jets.
         Vector3 lean = (wantFlat - flat) * 1.7f;
         float tiltMax = Gravity * MathF.Tan(MaxTilt);
         Vector3 vectored = Vector3.Zero;
@@ -328,11 +497,20 @@ internal sealed class FlightModel
             lean *= tiltMax / leanSize;
         }
 
-        float climb = Math.Clamp((input.Lift * ClimbSpeed - Velocity.Z) * 2.6f, -0.8f * Gravity, 0.9f * Gravity);
+        float wantVz = input.Lift * ClimbSpeed;
+        bool level = input.Hold && MathF.Abs(input.Lift) < 0.05f;
+        if (!level)
+            _holdZ = null;
+        else if (_holdZ == null && MathF.Abs(Velocity.Z) < HoldTakeBelow)
+            _holdZ = Position.Z;
+        if (_holdZ is { } height)
+            wantVz += Math.Clamp((height - Position.Z) * HeightSpring, -HeightPullMost, HeightPullMost);
+
+        float climb = Math.Clamp((wantVz - Velocity.Z) * 3.2f, -0.95f * Gravity, Gravity);
         float holdUp = Gravity + climb;
 
         Vector3 wantUp = Vector3.Normalize(lean + new Vector3(0f, 0f, Gravity));
-        float turn = WrapPi(input.Heading - MathF.Atan2(Forward.Y, Forward.X));
+        float turn = WrapPi(input.Heading - Yaw());
         Vector3 w = Vector3.Cross(Up, wantUp) * 3.4f + Vector3.UnitZ * (turn * 2.4f);
         var want = new Vector3(-Vector3.Dot(w, Forward), -Vector3.Dot(w, Right), Vector3.Dot(w, Up));
         rates = Clamp(want - Rates * 0.3f, HoverRates);
@@ -343,29 +521,17 @@ internal sealed class FlightModel
         return (Up * push + vectored) * hover;
     }
 
-    private static float FlatAngle(Vector3 from, Vector3 to)
-    {
-        if (from.X * from.X + from.Y * from.Y < 1e-6f || to.X * to.X + to.Y * to.Y < 1e-6f)
-            return 0f;
-        return WrapPi(MathF.Atan2(to.Y, to.X) - MathF.Atan2(from.Y, from.X));
-    }
-
-    private static float WrapPi(float a)
-    {
-        a %= MathF.Tau;
-        return a > MathF.PI ? a - MathF.Tau : a < -MathF.PI ? a + MathF.Tau : a;
-    }
-
     private void Turn(float dt, Vector3 cmd, float wings)
     {
+        // Slow on the wings there's little air over the control surfaces, so the turn rates drop off.
         float authority = Math.Clamp((Airspeed - StallSpeed * 0.35f) / (StallSpeed * 0.9f), 0.2f, 1f);
-        float give = wings * authority + (1f - wings);
-        cmd *= give;
+        cmd *= wings * authority + (1f - wings);
 
         Rates.X += (cmd.X - Rates.X) * Follow(dt, SpinUp.X);
         Rates.Y += (cmd.Y - Rates.Y) * Follow(dt, SpinUp.Y);
         Rates.Z += (cmd.Z - Rates.Z) * Follow(dt, SpinUp.Z);
 
+        // The airflow turns the nose back into it, harder the faster it goes.
         float q = AirflowPull();
         Rates.Y += -Alpha * 5f * q * wings * dt;
         Rates.Z += Beta * 4f * q * wings * dt;
@@ -374,9 +540,9 @@ internal sealed class FlightModel
         float angle = omega.Length() * dt;
         if (angle > 1e-6f)
         {
-            Quaternion turn = Quaternion.CreateFromAxisAngle(omega / omega.Length(), angle);
-            Forward = Vector3.Transform(Forward, turn);
-            Right = Vector3.Transform(Right, turn);
+            Quaternion spin = Quaternion.CreateFromAxisAngle(omega / omega.Length(), angle);
+            Forward = Vector3.Transform(Forward, spin);
+            Right = Vector3.Transform(Right, spin);
         }
 
         Orthonormalise();
@@ -391,37 +557,31 @@ internal sealed class FlightModel
         Up = Vector3.Cross(Forward, Right);
     }
 
-    public void Place(Vector3 at, float yaw, Vector3 velocity)
+    private static Vector3? Flat(Vector3 v)
     {
-        Position = at;
-        Velocity = velocity;
-        Forward = new Vector3(MathF.Cos(yaw), MathF.Sin(yaw), 0f);
-        Right = new Vector3(-Forward.Y, Forward.X, 0f);
-        Up = Vector3.UnitZ;
-        Rates = Vector3.Zero;
+        var f = new Vector3(v.X, v.Y, 0f);
+        float l = f.Length();
+        return l > 1e-3f ? f / l : null;
     }
 
-    public float Bump(Vector3 n, float bounce, float friction)
+    private static Vector3 Across(Vector3 axis, Vector3 dir)
     {
-        float into = Vector3.Dot(Velocity, n);
-        if (into >= 0f)
-            return 0f;
+        Vector3 v = axis - dir * Vector3.Dot(axis, dir);
+        float l = v.Length();
+        return l > 1e-4f ? v / l : Vector3.Zero;
+    }
 
-        Vector3 slide = Velocity - n * into;
-        Velocity = slide * friction - n * (into * bounce);
-
-        float kick = Math.Clamp(-into / 3000f, 0f, 1.5f);
-        Rates.Y += Vector3.Dot(n, Up) * kick * 1.5f;
-        Rates.Z -= Vector3.Dot(n, Right) * kick * 1.2f;
-        Rates.X += (Vector3.Dot(n, Right) >= 0f ? -1f : 1f) * kick * 2f;
-        return -into;
+    public static float WrapPi(float a)
+    {
+        a %= MathF.Tau;
+        return a > MathF.PI ? a - MathF.Tau : a < -MathF.PI ? a + MathF.Tau : a;
     }
 
     private static float Follow(float dt, float seconds) => 1f - MathF.Exp(-dt / MathF.Max(seconds, 1e-3f));
 
     private static float Approach(float v, float target, float step) => v < target ? MathF.Min(target, v + step) : MathF.Max(target, v - step);
 
-    private static float Ease(float t)
+    private static float Smooth(float t)
     {
         t = Math.Clamp(t, 0f, 1f);
         return t * t * (3f - 2f * t);

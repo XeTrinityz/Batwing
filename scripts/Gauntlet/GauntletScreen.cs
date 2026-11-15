@@ -231,7 +231,7 @@ internal static class GauntletScreen
         }
         catch (Exception ex)
         {
-            Log.Error("gauntlet screen", "Gauntlet screen", ex);
+            Log.Error("gauntlet screen", ex);
         }
         finally
         {

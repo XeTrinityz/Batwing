@@ -2,6 +2,7 @@ using BmSDK.Engine;
 
 namespace Trinity.Batwing;
 
+// Everything the mod draws on the screen, once a frame, in order.
 internal static class Overlay
 {
     private const float MaxFrame = 0.1f;
@@ -27,11 +28,9 @@ internal static class Overlay
         Gfx.Time += Gfx.Dt;
         Gfx.Frame++;
         Palette.Update();
-        Readout.Advance(Gfx.Dt);
-
-        float target = Deck.IsOpen ? 1f : 0f;
-        float speed = Deck.IsOpen ? 7f : 9f;
-        _deckAnim = _deckAnim < target ? Math.Min(target, _deckAnim + Gfx.Dt * speed) : Math.Max(target, _deckAnim - Gfx.Dt * speed);
+        Toasts.Advance(Gfx.Dt);
+        WheelView.Advance(Gfx.Dt);
+        _deckAnim = Ease.Approach(_deckAnim, Deck.IsOpen ? 1f : 0f, Gfx.Dt * (Deck.IsOpen ? 7f : 9f));
 
         if (Gauntlet.Hosting)
             _onWrist = true;
@@ -40,8 +39,8 @@ internal static class Overlay
         bool flat = !_onWrist && !Gauntlet.Waiting;
         GauntletScreen.Refresh();
 
-        bool hud = !paused && Wing.I.HasHud;
-        if (canvas == null || (_deckAnim <= 0f && !hud && !Readout.Showing))
+        bool hud = !paused && Wing.HasHud;
+        if (canvas == null || (_deckAnim <= 0f && !hud && !Toasts.Showing && !WheelView.Showing))
             return;
 
         if (!Gfx.Begin(canvas, out Font? font))
@@ -49,28 +48,22 @@ internal static class Overlay
 
         try
         {
+            Shapes.Under = Palette.Black;
             if (hud)
-            {
-                Gfx.Alpha = 1f;
-                Shapes.Under = Palette.Black;
-                try
-                {
-                    Wing.I.Draw(canvas);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("hud", "Flight HUD", ex);
-                }
-            }
-
-            if (_deckAnim > 0f && flat)
-                DeckView.Draw(_deckAnim);
+                Safe.Run("hud", () => Wing.Draw(canvas));
 
             Gfx.Alpha = 1f;
-            Readout.Draw();
+            if (_deckAnim > 0f && flat)
+                Safe.Run("deck", () => DeckView.Draw(_deckAnim));
+
+            Gfx.Alpha = 1f;
+            Safe.Run("wheel", WheelView.Draw);
+            Gfx.Alpha = 1f;
+            Toasts.Draw();
         }
         finally
         {
+            Gfx.Alpha = 1f;
             canvas.Font = font;
         }
     }

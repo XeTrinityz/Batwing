@@ -1,10 +1,12 @@
+using System.Numerics;
 using BmSDK;
 using BmSDK.BmGame;
 using BmSDK.Engine;
 
 namespace Trinity.Batwing;
 
-internal static class Car
+// The player's Batmobile and its weapons. The Batwing fires the Batmobile's own guns, so it shares its upgrades.
+internal static class Batmobile
 {
     private const double RefreshSeconds = 2.0;
 
@@ -48,14 +50,6 @@ internal static class Car
     public static AkPlayerVehicleSoundInfo? Sounds() =>
         Current() is { IsValid: true } car && car.PlayerVehicleInfo is { IsValid: true } info ? info : null;
 
-    public static bool Hostile(RVehicleNPC v) =>
-        Wreckable(v) && !v.CivilianVehicle && v.CurrentBehaviour is { IsValid: true };
-
-    // Can be shot up at all, whoever owns it. A thug driving an ordinary car fails Hostile.
-    public static bool Wreckable(RVehicleNPC v) =>
-        v is { IsValid: true, bDeleteMe: false, bHidden: false, DroneHacked: false } && v.Health > 0 &&
-        v is not RVehicleStaticTank && v is not RVehicleHeavyTank;
-
     public static int BarrageSize(RBatmobileMissileLauncher launcher)
     {
         TArray<int> levels = launcher.MaxTargetsPerLevel;
@@ -70,7 +64,53 @@ internal static class Car
         _car = null;
         _weapons.Clear();
         _refresh.Force();
+        _destination = null;
+        _destinationCheck.Force();
     }
+
+    private static (Vector3 At, string What)? _destination;
+    private static Every _destinationCheck;
+
+    // The map waypoint if one is set, otherwise the mission marker the game rates highest. The HUD asks every
+    // frame, so the answer is kept for a moment.
+    public static (Vector3 At, string What)? Destination()
+    {
+        if (_destinationCheck.Elapsed(0.25))
+            _destination = FindDestination();
+        return _destination;
+    }
+
+    private static (Vector3 At, string What)? FindDestination()
+    {
+        RPersistentData? pd = null;
+        Safe.Run("waypoint", () => pd = Game.GetPersistentData());
+        if (pd is { IsValid: true } && Safe.Try("waypoint on", pd.GetCustomWaypointEnabled))
+            return (pd.GetCustomWaypoint(true), "WAYPOINT");
+
+        if (World.Info is { } info && Objective(info) is { } objective)
+            return (objective, "OBJECTIVE");
+
+        return null;
+    }
+
+    private static Vector3? Objective(RGameInfo info)
+    {
+        var markers = info.ObjectiveMarkers;
+        int picked = info.HighestPriorityNonCustomObjectiveMarker;
+        if (picked >= 0 && picked < markers.Count && Usable(markers[picked]))
+            return markers[picked].Location;
+
+        RObjectiveMarker? best = null;
+        foreach (RObjectiveMarker m in markers)
+        {
+            if (Usable(m) && (best == null || m.Priority > best.Priority))
+                best = m;
+        }
+
+        return best?.Location;
+    }
+
+    private static bool Usable(RObjectiveMarker? m) => m is { IsValid: true, bDeleteMe: false, IsMarkerActive: true, IsCustomWaypoint: false };
 
     private static RVehicleBatmobileBase? Locate()
     {

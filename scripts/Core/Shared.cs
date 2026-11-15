@@ -1,5 +1,7 @@
 namespace Trinity.Batwing;
 
+// State that outlives a script reload, and what the mod shares with other mods. The menu owner and toast
+// lane keys are a contract with Oracle and must stay as they are.
 internal static class Shared
 {
     private const string MenuOwnerKey = "CeZeY.ModMenuOwner";
@@ -18,10 +20,20 @@ internal static class Shared
         _state = mod.State;
     }
 
-    public static T GetValue<T>(string key, T fallback) where T : struct =>
-        _state.TryGetValue(key, out object? value) && value is T held ? held : fallback;
+    public static bool Flag(string key) => _state.TryGetValue(key, out object? value) && value is true;
 
-    public static void Set(string key, object? value) => _state[key] = value;
+    public static void SetFlag(string key, bool on) => _state[key] = on;
+
+    // The object stored under the key, or the fresh one, stored now. Only SDK and system types can go
+    // here, a type of our own isn't the same type after a reload.
+    public static T Kept<T>(string key, T fresh) where T : class
+    {
+        if (_state.TryGetValue(key, out object? value) && value is T held)
+            return held;
+
+        _state[key] = fresh;
+        return fresh;
+    }
 
     public static string? MenuOwner
     {
@@ -30,6 +42,8 @@ internal static class Shared
     }
 
     public static bool ScreenFree => MenuOwner is null or OwnerName;
+
+    public static bool OtherMenuOpen => MenuOwner is { } owner && owner != OwnerName;
 
     public static bool AnyMenuOpen => MenuOwner is not null;
 }

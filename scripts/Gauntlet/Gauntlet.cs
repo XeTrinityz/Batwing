@@ -117,7 +117,7 @@ internal static class Gauntlet
     {
         if (pc == null || projector is not { IsValid: true } || (projector.ScreenOn && !Ours(projector)))
             return Where.Nowhere;
-        if (Wing.I.Flying || Wing.I.Lifting)
+        if (Wing.Piloting || Wing.Lifting)
             return Where.Nowhere;
 
         int state = pc.GetStateName().Index;
@@ -240,7 +240,7 @@ internal static class Gauntlet
         }
         catch (Exception ex)
         {
-            Log.Error("gauntlet stance", "Walking stance check", ex);
+            Log.Error("gauntlet stance", ex);
             return Standing;
         }
     }

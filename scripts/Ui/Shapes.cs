@@ -16,6 +16,7 @@ internal static unsafe class Shapes
     private static int _count;
     private static bool _broken;
 
+    // What the shapes are drawn over. Triangles are drawn solid, so a see-through colour is mixed over this.
     public static Rgba Under = new(5, 8, 6);
 
     public static void Release()

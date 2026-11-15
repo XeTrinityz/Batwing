@@ -2,6 +2,8 @@ using System.Text;
 
 namespace Trinity.Batwing;
 
+// settings.toml. The deck writes it a moment after a change, and edits made to the file by hand are read
+// back in while the game runs.
 internal static class Settings
 {
     private const string FileName = "settings.toml";
@@ -51,7 +53,7 @@ internal static class Settings
         }
         catch (Exception ex)
         {
-            Log.Info("Could not save " + FileName + ": " + ex.Message);
+            Log.Info("Couldn't save " + FileName + ": " + ex.Message);
         }
     }
 
@@ -62,11 +64,9 @@ internal static class Settings
         {
             if (first)
             {
-                foreach (Option o in Opt.All)
-                    o.Reset();
                 MarkDirty();
                 Flush();
-                Log.Info("Created " + FileName + ".");
+                Log.Info("Made " + FileName + ".");
             }
 
             return;
@@ -86,7 +86,7 @@ internal static class Settings
             if (ex.Message != _lastError)
             {
                 _lastError = ex.Message;
-                Log.Info(FileName + " failed to load, keeping current settings: " + ex.Message);
+                Log.Info(FileName + " failed to load, keeping the current settings: " + ex.Message);
             }
 
             return;
@@ -97,17 +97,17 @@ internal static class Settings
         int changed = 0;
         foreach (Option o in Opt.All)
         {
-            if (o.Toml == null)
+            if (!o.Saved)
                 continue;
 
             string before = o.Value;
             o.Read(Section(root, o.Page.Key));
-            if (o.Value != before)
-            {
-                changed++;
-                if (!first)
-                    Safe.Run(o.Id + " change", () => o.Changed?.Invoke());
-            }
+            if (o.Value == before)
+                continue;
+
+            changed++;
+            if (!first)
+                Safe.Run(o.Id + " change", () => o.Changed?.Invoke());
         }
 
         if (!first && changed > 0)
@@ -117,8 +117,8 @@ internal static class Settings
     private static string Compose()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# Batwing settings. The FLIGHT DECK keeps this file up to date, and edits made here apply while you play.");
-        sb.AppendLine("# Switches are true/false, dials are numbers, picks are names, keys are key names (F4, Y, Insert, MButton...).");
+        sb.AppendLine("# Batwing settings. The deck keeps this file up to date, and edits made here apply while you play.");
+        sb.AppendLine("# Switches are true or false, dials are numbers, picks are names, keys are key names (F4, Y, Insert, MButton...).");
         foreach (Page page in Opt.Pages)
         {
             sb.AppendLine();
@@ -127,21 +127,13 @@ internal static class Settings
             {
                 if (o.Toml is not { } value)
                     continue;
-                sb.AppendLine("# " + o.Label + ": " + Short(o));
+                sb.AppendLine("# " + o.Label + ": " + o.Takes);
                 sb.AppendLine(o.Id + " = " + value);
             }
         }
 
         return sb.ToString();
     }
-
-    private static string Short(Option o) => o switch
-    {
-        Pick p => string.Join(", ", p.Keys),
-        Dial d => d.Format(d.Min) + " to " + d.Format(d.Max),
-        Bind => "a key name",
-        _ => "true or false",
-    };
 
     private static TomlTable Section(TomlTable root, string name) =>
         root.TryGetValue(name, out object? raw) && raw is TomlTable table ? table : new TomlTable();

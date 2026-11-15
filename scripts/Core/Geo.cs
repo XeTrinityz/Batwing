@@ -7,6 +7,7 @@ namespace Trinity.Batwing;
 internal static class Geo
 {
     public const float Deg = 180f / MathF.PI;
+    public const float Metre = 100f;
 
     public static float WrapDegrees(float degrees)
     {
@@ -18,6 +19,8 @@ internal static class Geo
         return degrees;
     }
 
+    public static float Compass(float yaw) => ((yaw % 360f) + 360f) % 360f;
+
     public static Vector3 Facing(float yawDegrees)
     {
         float r = yawDegrees / Deg;
@@ -28,6 +31,26 @@ internal static class Geo
     {
         float y = yaw / Deg, p = pitch / Deg;
         return new Vector3(MathF.Cos(p) * MathF.Cos(y), MathF.Cos(p) * MathF.Sin(y), MathF.Sin(p));
+    }
+
+    public static float YawOf(Vector3 v) => MathF.Atan2(v.Y, v.X) * Deg;
+
+    public static float PitchOf(Vector3 v)
+    {
+        float l = v.Length();
+        return l < 1e-4f ? 0f : MathF.Asin(Math.Clamp(v.Z / l, -1f, 1f)) * Deg;
+    }
+
+    public static Vector3 Flat(Vector3 v)
+    {
+        var f = new Vector3(v.X, v.Y, 0f);
+        return f.LengthSquared() > 1e-4f ? Vector3.Normalize(f) : Vector3.UnitX;
+    }
+
+    public static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        float x = a.X - b.X, y = a.Y - b.Y;
+        return MathF.Sqrt(x * x + y * y);
     }
 
     public static void Axes(Rotator rot, out Vector3 fwd, out Vector3 right, out Vector3 up)
@@ -50,6 +73,20 @@ internal static class Geo
         return new Rotator(pitch * Deg, yaw * Deg, roll * Deg);
     }
 
+    // A point in a frame's own axes, out in the world.
+    public static Vector3 Out(Vector3 at, Vector3 fwd, Vector3 right, Vector3 up, Vector3 local) =>
+        at + fwd * local.X + right * local.Y + up * local.Z;
+
+    // A world point in a frame's own axes.
+    public static Vector3 In(Vector3 at, Vector3 fwd, Vector3 right, Vector3 up, Vector3 world)
+    {
+        Vector3 d = world - at;
+        return new Vector3(Vector3.Dot(d, fwd), Vector3.Dot(d, right), Vector3.Dot(d, up));
+    }
+
+    public static Vector3 Spin(Vector3 v, Vector3 axis, float radians) =>
+        axis.LengthSquared() < 1e-8f ? v : Vector3.Transform(v, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), radians));
+
     public static string Position(Vector3 v) => string.Format(CultureInfo.InvariantCulture, "{0:0}, {1:0}, {2:0}", v.X, v.Y, v.Z);
 }
 
@@ -65,7 +102,14 @@ internal static class Fmt
 
     public static string Percent(float v) => Whole(v * 100f) + "%";
 
-    public static string Secs(float v) => Whole(v) + " S";
-
     public static string Signed(float v) => (v >= 0f ? "+" : "") + Whole(v);
+
+    public static string Metres(float units) => Whole(units / Geo.Metre) + " M";
+
+    // Distance for the HUD, metres up close and kilometres further out.
+    public static string Range(float units)
+    {
+        float m = units / Geo.Metre;
+        return m < 1000f ? Whole(m) + " M" : (m / 1000f).ToString(m < 10000f ? "0.0" : "0", Inv) + " KM";
+    }
 }

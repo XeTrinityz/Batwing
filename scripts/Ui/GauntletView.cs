@@ -68,7 +68,7 @@ internal static class GauntletView
 
     private static Rgba Soft => Rgba.Mix(Palette.Hud, Palette.White, 0.4f);
 
-    private static string SelectKey => Pad.InUse ? "A" : "ENTER";
+    private static string SelectKey => Controls.PadActive ? Glyphs.Name(PadButton.A) : "ENTER";
 
     // Size is how much bigger the screen is than the game's own, and per is how many units make
     // one of the game's own screen.
@@ -158,7 +158,7 @@ internal static class GauntletView
         Spaced(PX(Left), cy - TextH(brand) * 0.5f, "BATWING", Soft, brand, 2.2f);
 
         float small = F(7f);
-        float key = Chip(PX(Right), cy, Pad.InUse ? "LB RB" : "TAB", Palette.Dim, small, alignRight: true);
+        float key = Chip(PX(Right), cy, Controls.PadActive ? Glyphs.Name(PadButton.LB) + " " + Glyphs.Name(PadButton.RB) : "TAB", Palette.Dim, small, alignRight: true);
 
         // The box is sized to the real title so the decode effect doesn't make it jump about.
         float title = F(10f);
@@ -171,7 +171,7 @@ internal static class GauntletView
         Outline(bx, by, boxW, boxH, Palette.Hud, focus ? 1f : 0.7f, Hair);
 
         Rgba ink = focus ? Palette.Screen : Ink;
-        BoldMid(bx + S(8f), cy, DeckView.Decode(name, (float)(Time - Deck.PageChangedAt)), ink, title);
+        BoldMid(bx + S(8f), cy, Decode.Text(name, (float)(Time - Deck.PageChangedAt)), ink, title);
         TextRight(bx + boxW - S(7f), cy, count, focus ? Palette.Screen : Palette.Dim, small);
 
         Rect(PX(Left), PY(StripH), S(Right - Left), Hair, Palette.Dim, 0.6f);
@@ -186,8 +186,8 @@ internal static class GauntletView
 
         float cy = PY(y + 4f);
         float lamp = S(5f);
-        Rect(PX(_focusLeft), cy - lamp * 0.5f, lamp, lamp, Wing.I.Lamp);
-        TextMid(PX(_focusLeft + 9f), cy, Wing.I.StateLabel, Palette.Dim, F(7.5f));
+        Rect(PX(_focusLeft), cy - lamp * 0.5f, lamp, lamp, Wing.Lamp);
+        TextMid(PX(_focusLeft + 9f), cy, Wing.Status, Palette.Dim, F(7.5f));
         y += 14f;
 
         y = Keys(y, ("UP DOWN", "PAGE"), (SelectKey, "OPEN"));
@@ -200,7 +200,7 @@ internal static class GauntletView
         y = Value(o, y + 6f);
         y = Hint(o, y + 5f);
 
-        string help = Deck.Binding is { } b ? "Press the key for " + b.Label + ". Backspace cancels." : o.Help;
+        string help = Deck.Binding is PadBind pb ? "Press the button for " + pb.Label + ". " + Glyphs.Name(PadButton.Start) + " cancels." : Deck.Binding is { } b ? "Press the key for " + b.Label + ". Backspace cancels." : o.Help;
         Wrapped(help, y + 6f, bottom);
     }
 
@@ -280,27 +280,30 @@ internal static class GauntletView
                 return top + 22f;
             }
 
-            case Bind b:
+            case Bind or PadBind:
             {
                 float cy = PY(top + 9f);
-                if (Deck.Binding == b)
+                if (Deck.Binding == o)
                 {
-                    BoldMid(left, cy, Deck.BindRefused ? "THAT KEY IS TAKEN" : "PRESS A KEY", Palette.CautionNow, F(12f));
-                    Rect(left, PY(top + 18f), S(FocusW), S(1.5f), Palette.CautionNow, blink ? 0.9f : 0.3f);
+                    BoldMid(left, cy, Deck.Swapped ?? (o is PadBind ? "PRESS A BUTTON" : "PRESS A KEY"), Palette.Caution, F(12f));
+                    Rect(left, PY(top + 18f), S(FocusW), S(1.5f), Palette.Caution, blink ? 0.9f : 0.3f);
                     return top + 19f;
                 }
 
-                Box(left, cy, b.Value, col, F(13f), S(8f));
+                if (o is PadBind pb)
+                    Glyphs.Draw(left, cy, pb.Button, F(13f));
+                else
+                    Box(left, cy, o.Value, col, F(13f), S(8f));
                 return top + 19f;
             }
 
-            case Act a:
+            case Command a:
             {
                 float cy = PY(top + 9f);
                 if (Deck.Confirming == a)
                 {
-                    BoldMid(left, cy, "PRESS AGAIN TO CONFIRM", Palette.CautionNow, F(9.5f));
-                    Rect(left, PY(top + 18f), S(FocusW) * Deck.ConfirmLeft, S(1.5f), Palette.CautionNow, blink ? 0.9f : 0.5f);
+                    BoldMid(left, cy, "PRESS AGAIN TO CONFIRM", Palette.Caution, F(9.5f));
+                    Rect(left, PY(top + 18f), S(FocusW) * Deck.ConfirmLeft, S(1.5f), Palette.Caution, blink ? 0.9f : 0.5f);
                     return top + 19f;
                 }
 
@@ -324,14 +327,14 @@ internal static class GauntletView
         if (Deck.Confirming == o)
             return Keys(top, (SelectKey, "CONFIRM"));
 
-        string adjust = Pad.InUse ? "D-PAD" : "LEFT RIGHT";
-        string reset = Pad.InUse ? "X" : "DEL";
-        bool resettable = !o.IsDefault && o is not Act;
+        string adjust = Controls.PadActive ? "D-PAD" : "LEFT RIGHT";
+        string reset = Controls.PadActive ? Glyphs.Name(PadButton.X) : "DEL";
+        bool resettable = !o.IsDefault && o is not Command;
         return o switch
         {
             Switch => resettable ? Keys(top, (SelectKey, "SWITCH"), (reset, "RESET")) : Keys(top, (SelectKey, "SWITCH")),
             Dial or Pick => resettable ? Keys(top, (adjust, "CHANGE"), (reset, "RESET")) : Keys(top, (adjust, "CHANGE")),
-            Bind => resettable ? Keys(top, (SelectKey, "REBIND"), (reset, "RESET")) : Keys(top, (SelectKey, "REBIND")),
+            Bind or PadBind => resettable ? Keys(top, (SelectKey, "REBIND"), (reset, "RESET")) : Keys(top, (SelectKey, "REBIND")),
             _ => top - 5f,
         };
     }
@@ -436,7 +439,7 @@ internal static class GauntletView
             if (selected)
                 Rect(PX(ListLeft), tileTop, S(2.5f), tileH, Palette.Hud, 1f);
 
-            if (!o.IsDefault && o is not Act)
+            if (!o.IsDefault && o is not Command)
                 Rect(PX(ListLeft + 6f), cy - S(1.5f), S(3f), S(3f), Palette.Hud);
 
             (string text, Rgba tone) = RowValue(o, selected);
@@ -474,9 +477,9 @@ internal static class GauntletView
         return o switch
         {
             Switch s => (s.Value, s.On ? tone : Palette.Dim),
-            Bind b when Deck.Binding == b => ("PRESS A KEY", Palette.CautionNow),
-            Act a when Deck.Confirming == a => ("CONFIRM", Palette.CautionNow),
-            Act a => (a.Value, Palette.Dim),
+            Bind or PadBind when Deck.Binding == o => (o is PadBind ? "PRESS A BUTTON" : "PRESS A KEY", Palette.Caution),
+            Command a when Deck.Confirming == a => ("CONFIRM", Palette.Caution),
+            Command a => (a.Value, Palette.Dim),
             _ => (o.Value, tone),
         };
     }
@@ -522,8 +525,8 @@ internal static class GauntletView
         y += 11f;
 
         float lamp = S(5f);
-        Rect(x, PY(y + 5f) - lamp * 0.5f, lamp, lamp, Wing.I.Lamp);
-        string rest = FitLine(Wing.I.StateLabel, S(StatusW - 9f), F(7.5f), out string line);
+        Rect(x, PY(y + 5f) - lamp * 0.5f, lamp, lamp, Wing.Lamp);
+        string rest = FitLine(Wing.Status, S(StatusW - 9f), F(7.5f), out string line);
         BoldMid(x + S(9f), PY(y + 5f), line, Ink, F(7.5f));
         if (rest.Length > 0)
         {
@@ -533,23 +536,24 @@ internal static class GauntletView
         }
 
         y += 18f;
-        bool flying = Wing.I.CraftLive;
-        (string, string)[] lines = flying
+        Craft? craft = Wing.Live ? Wing.Craft : null;
+        bool flying = craft != null;
+        (string, string)[] lines = craft != null
             ? new[]
             {
-                ("SPEED", Wing.I.SpeedText),
-                ("ALTITUDE", Wing.I.AltitudeText),
-                ("THROTTLE", Fmt.Percent(Wing.I.ThrottleFraction)),
-                ("HULL", Fmt.Percent(Wing.I.HullFraction)),
-                ("G", Fmt.Tenths(Wing.I.GLoad)),
+                ("SPEED", Hud.Speed(craft.Fm.Velocity.Length(), out string unit) + " " + unit),
+                ("ALTITUDE", craft.Below.Known ? Fmt.Metres(craft.Below.Distance) : "---"),
+                ("THROTTLE", Fmt.Percent(craft.Fm.Hover > 0.5f ? Math.Clamp(craft.Fm.Jets / 2f, 0f, 1f) : craft.Fm.Throttle)),
+                ("HULL", Fmt.Percent(Pilot.Current?.Hull ?? 1f)),
+                ("G", Fmt.Tenths(craft.Fm.GLoad)),
             }
             : new[]
             {
-                ("CALL", Opt.CallKey.Value),
-                ("REMOTE", Opt.RemoteKey.Value),
-                ("ESCORT", Opt.EscortKey.Value),
-                ("STRIKE", Opt.StrikeKey.Value),
-                ("LIFT", Opt.LiftKey.Value),
+                ("CALL", Prompt.Of(Act.Call).Text),
+                ("REMOTE", Prompt.Of(Act.Remote).Text),
+                ("ESCORT", Prompt.Of(Act.Escort).Text),
+                ("STRIKE", Prompt.Of(Act.Strike).Text),
+                ("LIFT", Prompt.Of(Act.Lift).Text),
             };
 
         Text(x, PY(y), flying ? "FLIGHT" : "KEYS", Palette.Dim, F(7f));

@@ -3,6 +3,7 @@ using FLinearColor = BmSDK.GameObject.FLinearColor;
 
 namespace Trinity.Batwing;
 
+// Drawing on the game's canvas. Sizes are in 1080p pixels and scaled to the screen.
 internal static class Gfx
 {
     private const int MaxCachedWidths = 4096;
@@ -68,6 +69,20 @@ internal static class Gfx
         Rect(x + w - t, y + t, t, h - t * 2f, col, alpha);
     }
 
+    // Corner ticks round a box, lighter than a full outline.
+    public static void Corners(float x, float y, float w, float h, float len, Rgba col, float alpha, float t = 1f)
+    {
+        t = MathF.Max(1f, MathF.Round(t));
+        Rect(x, y, len, t, col, alpha);
+        Rect(x, y, t, len, col, alpha);
+        Rect(x + w - len, y, len, t, col, alpha);
+        Rect(x + w - t, y, t, len, col, alpha);
+        Rect(x, y + h - t, len, t, col, alpha);
+        Rect(x, y + h - len, t, len, col, alpha);
+        Rect(x + w - len, y + h - t, len, t, col, alpha);
+        Rect(x + w - t, y + h - len, t, len, col, alpha);
+    }
+
     public static float TextW(string text, float scale)
     {
         if (_widths.Count >= MaxCachedWidths)
@@ -114,6 +129,7 @@ internal static class Gfx
     public static void TextCentre(float cx, float cy, string text, Rgba col, float scale, float alpha = 1f) =>
         TextMid(cx - TextW(text, scale) * 0.5f, cy, text, col, scale, alpha);
 
+    // Letter spaced text for titles.
     public static float Spaced(float x, float y, string text, Rgba col, float scale, float spacing, float alpha = 1f)
     {
         float start = x;
@@ -135,6 +151,7 @@ internal static class Gfx
         return w - S(spacing);
     }
 
+    // As much of the text as fits the width on one line, breaking at a space. Returns the rest.
     public static string FitLine(string text, float width, float scale, out string line)
     {
         if (TextW(text, scale) <= width)
@@ -151,12 +168,30 @@ internal static class Gfx
                 break;
 
             cut = space;
-            if (TextW(text.Substring(0, cut), scale) <= width)
+            if (TextW(text[..cut], scale) <= width)
                 break;
         }
 
-        line = text.Substring(0, cut);
-        return text.Substring(cut).TrimStart();
+        line = text[..cut];
+        return text[cut..].TrimStart();
+    }
+
+    // Text wrapped into the width, at most so many lines. The last line gets dots if it ran out.
+    public static float Wrap(float x, float y, string text, float width, float scale, float lineH, int most, Rgba col, float alpha = 1f)
+    {
+        string rest = text;
+        int lines = 0;
+        while (rest.Length > 0 && lines < most)
+        {
+            rest = FitLine(rest, width, scale, out string line);
+            if (rest.Length > 0 && lines == most - 1)
+                line = line.TrimEnd('.', ',') + "...";
+            Text(x, y, line, col, scale, alpha);
+            y += lineH;
+            lines++;
+        }
+
+        return y;
     }
 
     public static float Follow(float value, float target, float rate) =>
@@ -168,5 +203,62 @@ internal static class Gfx
         for (int i = 0; i < table.Length; i++)
             table[i] = MathF.Pow(i / 255f, 2.2f);
         return table;
+    }
+}
+
+internal readonly record struct Rgba(byte R, byte G, byte B, byte A = 255)
+{
+    public static Rgba Mix(Rgba a, Rgba b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return new Rgba((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t), (byte)(a.A + (b.A - a.A) * t));
+    }
+
+    public Rgba Dim(float f) => new((byte)(R * f), (byte)(G * f), (byte)(B * f), A);
+}
+
+internal static class Palette
+{
+    private static readonly Rgba[] Phosphors =
+    {
+        new(96, 204, 244),
+        new(118, 255, 136),
+        new(255, 186, 56),
+        new(232, 240, 236),
+    };
+
+    private static readonly Rgba ScreenBase = new(5, 7, 8, 236);
+    private const float ScreenTint = 0.04f;
+
+    public static Rgba Hud { get; private set; } = Phosphors[0];
+    public static Rgba Text { get; private set; } = Phosphors[0].Dim(0.86f);
+    public static Rgba Dim { get; private set; } = Phosphors[0].Dim(0.55f);
+    public static Rgba Faint { get; private set; } = Phosphors[0].Dim(0.3f);
+    public static Rgba Screen { get; private set; } = Rgba.Mix(ScreenBase, Phosphors[0] with { A = 236 }, ScreenTint);
+
+    public static readonly Rgba Warn = new(255, 84, 70);
+    public static readonly Rgba Bezel = new(22, 25, 27, 250);
+    public static readonly Rgba BezelEdge = new(58, 64, 68);
+    public static readonly Rgba Black = new(0, 0, 0);
+    public static readonly Rgba White = new(255, 255, 255);
+
+    // Amber, except on an amber HUD where it wouldn't stand out.
+    public static Rgba Caution => Opt.HudColour.Index == 2 ? new Rgba(240, 244, 240) : new Rgba(255, 186, 56);
+
+    private static int _index = -1;
+
+    public static void Update()
+    {
+        int index = Math.Clamp(Opt.HudColour.Index, 0, Phosphors.Length - 1);
+        if (index == _index)
+            return;
+
+        _index = index;
+        Rgba p = Phosphors[index];
+        Hud = p;
+        Text = p.Dim(0.86f);
+        Dim = p.Dim(0.55f);
+        Faint = p.Dim(0.3f);
+        Screen = Rgba.Mix(ScreenBase, p with { A = 236 }, ScreenTint);
     }
 }

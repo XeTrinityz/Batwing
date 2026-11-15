@@ -20,19 +20,25 @@ internal abstract class Option
 
     public abstract bool IsDefault { get; }
 
-    public abstract bool Step(int dir);
+    // Left and right. False when nothing changed.
+    public virtual bool Step(int dir) => false;
 
+    // Enter or A. False when nothing changed.
     public virtual bool Press() => Step(1);
 
     public abstract void Reset();
 
     public abstract void Read(TomlTable table);
 
+    // What goes in settings.toml, or null for a row that isn't saved.
     public abstract string? Toml { get; }
+
+    // What settings.toml says this row takes, for the comment over it.
+    public virtual string Takes => "";
 
     public virtual string LabelNow => Label;
 
-    public virtual bool HasValue => true;
+    public virtual bool Saved => Toml != null;
 }
 
 internal sealed class Switch : Option
@@ -55,6 +61,8 @@ internal sealed class Switch : Option
     public override void Read(TomlTable table) => On = table.TryGetValue(Id, out object? v) && v is bool b ? b : Default;
 
     public override string Toml => On ? "true" : "false";
+
+    public override string Takes => "true or false";
 }
 
 internal sealed class Dial : Option
@@ -76,8 +84,8 @@ internal sealed class Dial : Option
 
     public override bool Step(int dir)
     {
-        float next = MathF.Round(Math.Clamp(Number + dir * Stride, Min, Max) / Stride) * Stride;
-        next = MathF.Round(next, 3);
+        float next = MathF.Round(MathF.Round(Math.Clamp(Number + dir * Stride, Min, Max) / Stride) * Stride, 3);
+        next = Math.Clamp(next, Min, Max);
         if (MathF.Abs(next - Number) < 0.0001f)
             return false;
 
@@ -104,11 +112,14 @@ internal sealed class Dial : Option
     }
 
     public override string Toml => Number.ToString("0.0##", CultureInfo.InvariantCulture);
+
+    public override string Takes => Format(Min) + " to " + Format(Max);
 }
 
 internal sealed class Pick : Option
 {
     public int Index;
+    public int Default;
     public string[] Keys = Array.Empty<string>();
     public string[] Labels = Array.Empty<string>();
 
@@ -116,7 +127,7 @@ internal sealed class Pick : Option
 
     public string Key => Keys.Length == 0 ? "" : Keys[Math.Clamp(Index, 0, Keys.Length - 1)];
 
-    public override bool IsDefault => Index == 0;
+    public override bool IsDefault => Index == Default;
 
     public override bool Step(int dir)
     {
@@ -127,37 +138,35 @@ internal sealed class Pick : Option
         return true;
     }
 
-    public override void Reset() => Index = 0;
+    public override void Reset() => Index = Default;
 
     public override void Read(TomlTable table)
     {
         string saved = table.TryGetValue(Id, out object? v) && v is string s ? s : "";
-        Index = Math.Max(0, Array.FindIndex(Keys, k => k.Equals(saved, StringComparison.OrdinalIgnoreCase)));
+        int found = Array.FindIndex(Keys, k => k.Equals(saved, StringComparison.OrdinalIgnoreCase));
+        Index = found >= 0 ? found : Default;
     }
 
     public override string Toml => "\"" + Key + "\"";
+
+    public override string Takes => string.Join(", ", Keys);
 }
 
+// A keyboard key or mouse button for one action.
 internal sealed class Bind : Option
 {
     public Keys Key;
     public Keys Default;
+    public Act For;
+
+    // Flight controls may take the mouse buttons. The mod's own hotkeys can't, the game needs them on foot.
+    public bool Mouse;
 
     public override string Value => Key == Keys.None ? "NONE" : KeyName(Key);
 
     public override bool IsDefault => Key == Default;
 
-    public override bool Step(int dir) => false;
-
     public override bool Press() => false;
-
-    public bool Take(Keys key)
-    {
-        if (key == Key)
-            return false;
-        Key = key;
-        return true;
-    }
 
     public override void Reset() => Key = Default;
 
@@ -166,11 +175,14 @@ internal sealed class Bind : Option
 
     public override string Toml => "\"" + Key + "\"";
 
+    public override string Takes => "a key name";
+
     public static string KeyName(Keys key) => key switch
     {
-        Keys.LButton => "MOUSE 1",
-        Keys.RButton => "MOUSE 2",
-        Keys.MButton => "MOUSE 3",
+        Keys.None => "NONE",
+        Keys.LButton => "LEFT MOUSE",
+        Keys.RButton => "RIGHT MOUSE",
+        Keys.MButton => "MIDDLE MOUSE",
         Keys.XButton1 => "MOUSE 4",
         Keys.XButton2 => "MOUSE 5",
         Keys.Back => "BACKSPACE",
@@ -178,6 +190,8 @@ internal sealed class Bind : Option
         Keys.ControlKey => "CTRL",
         Keys.ShiftKey => "SHIFT",
         Keys.Menu => "ALT",
+        Keys.Space => "SPACE",
+        Keys.Capital => "CAPS LOCK",
         Keys.Oemtilde => "~",
         Keys.OemMinus => "-",
         Keys.Oemplus => "=",
@@ -195,25 +209,48 @@ internal sealed class Bind : Option
     };
 }
 
-internal sealed class Act : Option
+// A controller button for one action.
+internal sealed class PadBind : Option
+{
+    public PadButton Button;
+    public PadButton Default;
+    public Act For;
+
+    public override string Value => Glyphs.Name(Button);
+
+    public override bool IsDefault => Button == Default;
+
+    public override bool Press() => false;
+
+    public override void Reset() => Button = Default;
+
+    public override void Read(TomlTable table) =>
+        Button = table.TryGetValue(Id, out object? v) && v is string s && Enum.TryParse(s, true, out PadButton b) && Glyphs.Bindable(b) ? b : Default;
+
+    public override string Toml => "\"" + Button + "\"";
+
+    public override string Takes => "A, B, X, Y, LB, RB, LS, RS, Back, Up, Down, Left, Right";
+}
+
+// A row that does something rather than holding a setting.
+internal sealed class Command : Option
 {
     public Action Run = () => { };
 
+    // The label as it reads right now, like CALL BATWING or BAIL OUT.
     public Func<string>? Live;
 
+    // Shown where a setting shows its value.
     public Func<string>? Note;
 
+    // Asks for a second press before it runs.
     public bool Confirm;
 
     public override string Value => Note?.Invoke() ?? "";
 
     public override string LabelNow => Live?.Invoke() ?? Label;
 
-    public override bool HasValue => false;
-
     public override bool IsDefault => true;
-
-    public override bool Step(int dir) => false;
 
     public override bool Press()
     {
@@ -221,9 +258,13 @@ internal sealed class Act : Option
         return true;
     }
 
-    public override void Reset() { }
+    public override void Reset()
+    {
+    }
 
-    public override void Read(TomlTable table) { }
+    public override void Read(TomlTable table)
+    {
+    }
 
     public override string? Toml => null;
 }

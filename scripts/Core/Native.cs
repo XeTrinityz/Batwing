@@ -10,9 +10,21 @@ internal static class Native
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
 
-    public static bool GameInFront()
+    private static int _frame = -1;
+    private static bool _front;
+
+    // Asked many times a frame, so the answer is kept for the frame.
+    public static bool GameInFront
     {
-        GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
-        return pid == (uint)Environment.ProcessId;
+        get
+        {
+            if (_frame == Gfx.Frame)
+                return _front;
+
+            _frame = Gfx.Frame;
+            GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
+            _front = pid == (uint)Environment.ProcessId;
+            return _front;
+        }
     }
 }

@@ -1,182 +1,185 @@
 namespace Trinity.Batwing;
 
+// Every page and setting of the deck, one field each.
 internal static class Opt
 {
     public static readonly List<Page> Pages = new();
     public static readonly List<Option> All = new();
+    public static readonly Dictionary<Act, Bind> KeyBinds = new();
+    public static readonly Dictionary<Act, PadBind> PadBinds = new();
 
-    public static Act Call = null!;
-    public static Act RemoteCall = null!;
-    public static Act EscortCall = null!;
-    public static Switch FlyIn = null!;
-    public static Switch Grapple = null!;
-    public static Switch Assist = null!;
-    public static Switch HoverDrift = null!;
+    public static Command Call = null!, RemoteCall = null!, EscortCall = null!, LiftCall = null!, Reset = null!;
+    public static Switch FlyIn = null!, Grapple = null!, HoverDrift = null!, HoverHold = null!, Crashes = null!, EscortOnBail = null!;
+    public static Pick Assist = null!;
     public static Dial TopSpeed = null!;
-    public static Switch Crashes = null!;
-    public static Switch EscortOnBail = null!;
 
-    public static Act LiftCall = null!;
-    public static Switch CatchEject = null!;
-    public static Switch DropDamage = null!;
+    public static Switch CatchEject = null!, DropDamage = null!;
 
-    public static Pick Controls = null!;
-    public static Dial AimSpeed = null!;
-    public static Bind CallKey = null!;
-    public static Bind RemoteKey = null!;
-    public static Bind EscortKey = null!;
-    public static Bind StrikeKey = null!;
-    public static Bind LiftKey = null!;
-    public static Bind DeckKey = null!;
-    public static Switch Controller = null!;
-    public static Switch PadInvert = null!;
-    public static Pick PadButton = null!;
+    public static Switch Weapons = null!, GunAssist = null!, CannonHoming = null!;
 
-    public static Switch Weapons = null!;
-    public static Switch GunAssist = null!;
-    public static Switch CannonHoming = null!;
+    public static Pick ControlMode = null!;
+    public static Dial MouseAim = null!;
 
-    public static Pick Camera = null!;
-    public static Switch Hud = null!;
-    public static Pick HudColour = null!;
+    public static Switch Controller = null!, PadInvert = null!, Rumble = null!;
+    public static Dial PadAim = null!, Deadzone = null!, RumbleStrength = null!;
+    public static Pick PadResponse = null!, StickLayout = null!, ButtonStyle = null!, MenuChord = null!;
+
+    public static Pick Camera = null!, HudColour = null!, HudLayout = null!, SpeedUnit = null!;
+    public static Switch Hud = null!, Nav = null!, Hints = null!, HideGameHud = null!;
     public static Dial HudSize = null!;
-    public static Pick SpeedUnit = null!;
-    public static Switch Hints = null!;
-    public static Switch HideGameHud = null!;
 
     public static Pick DeckOn = null!;
-    public static Dial GauntletSize = null!;
-    public static Dial GauntletText = null!;
-    public static Dial DeckSize = null!;
-    public static Switch Effects = null!;
-    public static Switch Diagnostics = null!;
-    public static Act Reset = null!;
+    public static Dial GauntletSize = null!, GauntletText = null!, DeckSize = null!;
+    public static Switch Effects = null!, Diagnostics = null!;
 
-    public static bool Direct => Controls.Index == 1;
+    public static bool Direct => ControlMode.Index == 1;
 
-    public static bool DeckOnGauntlet => DeckOn.Key == "gauntlet";
+    public static bool DeckOnGauntlet => DeckOn.Index == 0;
+
+    public static Assist AssistLevel => Assist.Index switch { 1 => Batwing.Assist.Standard, 2 => Batwing.Assist.Off, _ => Batwing.Assist.Full };
+
+    public static Bind KeyFor(Act act) => KeyBinds[act];
 
     public static void Build()
     {
         Pages.Clear();
         All.Clear();
+        KeyBinds.Clear();
+        PadBinds.Clear();
 
-        Page flight = Add("flight", "FLIGHT", "Flight settings.");
-        Call = Act(flight, "call", "CALL BATWING",
-            "Calls the Batwing to you and puts you in the cockpit. Press again while it's on the way to cancel, or while flying to bail out. Same as the call key. Needs open sky above you.",
-            () => Wing.I.Toggle());
-        Call.Live = () => Wing.I.ActionLabel;
-        Call.Note = () => Wing.I.StateLabel;
-        RemoteCall = Act(flight, "remote", "REMOTE CONTROL",
-            "Fly the Batwing from where Batman stands, like the Batmobile's remote. Batman can't move and if he gets hit the link drops. Same range as the Batmobile's remote, or about 300 m with no Batmobile in the city. Same as the remote key.",
-            () => Wing.I.RemoteToggle());
-        RemoteCall.Live = () => Wing.I.RemoteLabel;
-        EscortCall = Act(flight, "escort", "ESCORT",
-            "The Batwing circles overhead and takes on drones and helicopters near Batman by itself. Thugs, cars with thugs in them and APCs only when you order a strike. Call it to get picked up. Same as the escort key.",
-            () => Wing.I.EscortToggle());
-        EscortCall.Live = () => Wing.I.EscortLabel;
-        FlyIn = Add(flight, "fly_in", "FLY IN", true,
-            "Batwing flies in and hovers above you before you get in. Turn off to board instantly. If you call it while gliding it picks you up either way.");
-        Grapple = Add(flight, "grapple_in", "GRAPPLE IN", true,
-            "When it flies in and you're on the ground, Batman grapples up into the cockpit instead of appearing in it.");
-        Assist = Add(flight, "assist", "FLIGHT ASSIST", true,
-            "Auto levels the wings, stops you stalling and switches to VTOL hover at low speed. Turn off for no help at all, you can stall and fall.");
-        HoverDrift = Add(flight, "hover_drift", "HOVER DRIFT", true,
-            "The Batwing bobs and sways a little while it hovers, like it's holding itself up on its jets. It's only the look of it. Steering and aim are not touched. Turn off for a dead still hover.");
-        TopSpeed = Add(flight, "top_speed", "TOP SPEED", 90f, 50f, 140f, 5f, v => Fmt.Whole(v) + " M/S",
-            "Max speed at full throttle. Afterburner adds about 40% for a few seconds. The city may stutter a little as it loads in at high speed.");
-        Crashes = Add(flight, "crashes", "CRASHES", true,
-            "Hit something hard enough and the Batwing gets destroyed and you're thrown out. Small bumps and enemy fire damage the hull. Turn off for no damage.");
-        EscortOnBail = Add(flight, "escort_on_bail", "ESCORT ON BAIL", true,
-            "When you bail out the Batwing stays and covers you on escort instead of flying off. Turn off to have it leave.");
+        Page flight = AddPage("flight", "FLIGHT", "Calling the Batwing and how it flies.");
+        Call = Do(flight, "call", "CALL BATWING",
+            "Calls the Batwing and puts you in the cockpit. Press again while it's on the way to wave it off, or while flying to bail out. Needs open sky above you.",
+            Wing.CallPressed);
+        Call.Live = () => Wing.CallLabel;
+        Call.Note = () => Wing.Status;
+        RemoteCall = Do(flight, "remote", "REMOTE CONTROL",
+            "Fly the Batwing from where Batman stands, like the Batmobile's remote. Batman can't move and the link drops if he gets hit. It stays in range of him.",
+            Wing.RemotePressed);
+        RemoteCall.Live = () => Wing.RemoteLabel;
+        EscortCall = Do(flight, "escort", "ESCORT",
+            "The Batwing covers you from the air and takes on drones and helicopters by itself. Thugs, manned cars, APCs, turrets and heavy tanks only when you order a strike.",
+            Wing.EscortPressed);
+        EscortCall.Live = () => Wing.EscortLabel;
+        Assist = AddPick(flight, "assist", "FLIGHT ASSIST", new[] { "full", "standard", "off" }, new[] { "FULL", "STANDARD", "OFF" }, 0,
+            "FULL levels the wings, stops stalls and drops into hover when you slow right down. STANDARD stops stalls and keeps turns clean but leaves the rest to you. OFF gives no help at all and you can stall and fall.");
+        HoverHold = AddSwitch(flight, "hover_hold", "HOVER HOLD", true,
+            "Let go of the sticks in hover and the Batwing holds its spot and height. Turn off to let it drift.");
+        HoverDrift = AddSwitch(flight, "hover_drift", "HOVER DRIFT", true,
+            "The Batwing bobs and sways a little while it hovers. It's only the look of it, steering and aim aren't touched.");
+        TopSpeed = AddDial(flight, "top_speed", "TOP SPEED", 90f, 50f, 140f, 5f, v => Fmt.Whole(v) + " M/S",
+            "Top speed at full throttle. The afterburner adds about 40% for a few seconds. The city can stutter as it loads in at high speed.");
+        FlyIn = AddSwitch(flight, "fly_in", "FLY IN", true,
+            "The Batwing flies in and hovers over you before you get in. Turn off to board straight away. Called while gliding it picks you up either way.");
+        Grapple = AddSwitch(flight, "grapple_in", "GRAPPLE IN", true,
+            "When it flies in and you're on the ground, Batman grapples up into the cockpit.");
+        Crashes = AddSwitch(flight, "crashes", "CRASHES", true,
+            "Hit something hard enough and the Batwing is wrecked and you're thrown out. Bumps and enemy fire damage the hull. Turn off for no damage.");
+        EscortOnBail = AddSwitch(flight, "escort_on_bail", "ESCORT ON BAIL", true,
+            "When you bail out the Batwing stays and covers you on escort instead of flying off.");
 
-        Page batmobile = Add("batmobile", "BATMOBILE", "The Batwing and the Batmobile together.");
-        LiftCall = Act(batmobile, "lift", "LIFT BATMOBILE",
-            "In the Batmobile, the Batwing hooks it and flies you to your map waypoint, or the mission marker if there's no waypoint. Press again to be set down where you are. On foot, it fetches the Batmobile and sets it down where you're looking, or next to you if there's no room there. Press again to mark a new spot. While flying, hover over the Batmobile to hook it and press again to drop it. Same as the lift key.",
-            () => Wing.I.LiftAction());
-        LiftCall.Live = () => Wing.I.LiftLabel;
-        LiftCall.Note = () => Wing.I.LiftNote;
-        CatchEject = Add(batmobile, "catch_eject", "CATCH ON EJECT", false,
-            "On escort, eject from the Batmobile and the Batwing flies under you and picks you up in the air.");
-        DropDamage = Add(batmobile, "drop_damage", "DROP DAMAGE", true,
+        Page batmobile = AddPage("batmobile", "BATMOBILE", "The Batwing and the Batmobile together.");
+        LiftCall = Do(batmobile, "lift", "LIFT BATMOBILE",
+            "In the Batmobile it hooks the car and flies you to your map waypoint or the mission marker. On foot it fetches the Batmobile and sets it down where you're looking. While flying, hover over the Batmobile to hook it and press again to drop it.",
+            Wing.LiftPressed);
+        LiftCall.Live = () => Wing.LiftLabel;
+        LiftCall.Note = () => Wing.LiftNote;
+        CatchEject = AddSwitch(batmobile, "catch_eject", "CATCH ON EJECT", false,
+            "On escort, eject from the Batmobile and the Batwing swoops under you and picks you up in the air.");
+        DropDamage = AddSwitch(batmobile, "drop_damage", "DROP DAMAGE", true,
             "Drop the Batmobile from high up and it wrecks vehicles and knocks down thugs where it lands.");
 
-        Page controls = Add("controls", "CONTROLS", "Keybinds and controller.");
-        Controls = Add(controls, "controls", "CONTROL MODE", new[] { "aim", "direct" }, new[] { "MOUSE AIM", "DIRECT" },
-            "MOUSE AIM flies the Batwing towards where you look, A and D roll. DIRECT uses the mouse or right stick for pitch and roll, A and D for rudder.");
-        AimSpeed = Add(controls, "aim_speed", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times,
-            "Aim sensitivity for the mouse and right stick. Mouse stacks with the game's own sensitivity setting.");
-        CallKey = Add(controls, "call_key", "CALL KEY", Keys.Y,
-            "Key to call, cancel or bail out. Press ENTER, then the new key.");
-        RemoteKey = Add(controls, "remote_key", "REMOTE KEY", Keys.U,
-            "Key to start or end remote control. Press ENTER, then the new key.");
-        EscortKey = Add(controls, "escort_key", "ESCORT KEY", Keys.I,
-            "Key to bring in or dismiss the escort. Press ENTER, then the new key.");
-        StrikeKey = Add(controls, "strike_key", "STRIKE KEY", Keys.T,
-            "On escort, look at a thug, vehicle, turret or heavy tank and press this to have the Batwing take it down. Hold it and sweep across targets to mark up to 6, and it takes them in order. Press ENTER, then the new key.");
-        LiftKey = Add(controls, "lift_key", "LIFT KEY", Keys.O,
-            "Key to lift or fetch the Batmobile, or to hook and drop it while flying. Press ENTER, then the new key.");
-        DeckKey = Add(controls, "deck_key", "DECK KEY", Keys.F4,
-            "Key to open and close the deck. Press ENTER, then the new key.");
-        Controller = Add(controls, "controller", "CONTROLLER", true,
-            "Xbox controller support. RS steers, LS throttle and roll, RT afterburner, LT brake, Y hover, B bail out or end remote, LB free look, D-pad up camera, D-pad down hook or drop the Batmobile, X guns, RB cannon, A missiles. Start remote control, escort and lifts from the deck.");
-        PadInvert = Add(controls, "pad_invert", "INVERT PAD PITCH", false,
-            "Pull the right stick back to climb, like a flight stick. Off means push up to climb.");
-        PadButton = Add(controls, "pad_button", "PAD DECK BUTTON", new[] { "lb+rb", "ls+rs", "off" }, new[] { "HOLD LB + RB", "HOLD LS + RS", "OFF" },
-            "Hold to open the deck on controller. A select, B back, LB and RB change page, X resets a setting.");
-
-        Page weapons = Add("weapons", "WEAPONS", "Batmobile weapons on the Batwing.");
-        Weapons = Add(weapons, "weapons", "WEAPONS", true,
-            "Uses your Batmobile's weapons and upgrades. Hold LMB (X) for the Vulcan gun, Q (RB) for the cannon, hold RMB (A) to lock onto drones and tanks and release to fire missiles. Click LMB (X) while locking to put another missile on the target you aim at. Aim at a thug and the guns fire riot rounds that knock them out. Batmobile has to be in the city.");
-        GunAssist = Add(weapons, "gun_assist", "GUN AIM ASSIST", true,
-            "Vulcan gun snaps onto drones and tanks close to your aim. Turn off and shots go exactly where you aim.");
-        CannonHoming = Add(weapons, "cannon_homing", "CANNON HOMING", true,
+        Page weapons = AddPage("weapons", "WEAPONS", "The Batmobile's weapons on the Batwing.");
+        Weapons = AddSwitch(weapons, "weapons", "WEAPONS", true,
+            "Uses your Batmobile's weapons and upgrades. The Vulcan gun, the heavy cannon and lock-on missiles. Aim at a thug and the guns fire riot rounds that knock them out. The Batmobile has to be in the city.");
+        GunAssist = AddSwitch(weapons, "gun_assist", "GUN AIM ASSIST", true,
+            "The Vulcan gun snaps onto drones and tanks close to your aim. Turn off and rounds go exactly where you aim.");
+        CannonHoming = AddSwitch(weapons, "cannon_homing", "CANNON HOMING", true,
             "Cannon shells home in on the vehicle you're aiming at. Turn off and they fly straight.");
 
-        Page display = Add("display", "DISPLAY", "Camera and HUD.");
-        Camera = Add(display, "camera", "CAMERA", new[] { "chase", "far", "cockpit" }, new[] { "CHASE", "FAR CHASE", "COCKPIT" },
-            "Camera position. Press C while flying to switch (D-pad up on controller).");
-        Hud = Add(display, "hud", "FLIGHT HUD", true,
-            "Jet style HUD with speed, altitude, heading, pitch ladder, throttle, hull, gun heat and warnings.");
-        HudColour = Add(display, "hud_colour", "HUD COLOUR", new[] { "blue", "green", "amber", "white" }, new[] { "BLUE", "GREEN", "AMBER", "WHITE" },
-            "HUD and deck colour.");
-        HudSize = Add(display, "hud_size", "HUD SIZE", 1f, 0.7f, 1.4f, 0.05f, Fmt.Times, "HUD scale.");
-        SpeedUnit = Add(display, "speed_unit", "SPEED UNIT", new[] { "mph", "kmh", "ms" }, new[] { "MPH", "KM/H", "M/S" }, "Speed unit on the HUD.");
-        Hints = Add(display, "hints", "KEY HINTS", true, "Shows the controls for a few seconds when you get in. H to hide.");
-        HideGameHud = Add(display, "hide_game_hud", "HIDE GAME HUD", false, "Hides the normal game HUD while flying.");
+        Page keys = AddPage("keyboard", "KEYBOARD", "Mouse and keyboard controls.");
+        ControlMode = AddPick(keys, "control_mode", "CONTROL MODE", new[] { "aim", "direct" }, new[] { "MOUSE AIM", "DIRECT" }, 0,
+            "MOUSE AIM flies the Batwing towards where you look and banks it into turns for you. DIRECT puts the mouse or right stick on pitch and roll like a joystick, with the roll keys on the rudder.");
+        MouseAim = AddDial(keys, "mouse_aim", "MOUSE SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times,
+            "How fast the mouse aims. It stacks with the game's own mouse sensitivity.");
+        AddKey(keys, Act.Call, "call_key", "CALL", Keys.Y, "Call, wave off or bail out.");
+        AddKey(keys, Act.Remote, "remote_key", "REMOTE", Keys.U, "Start or end remote control.");
+        AddKey(keys, Act.Escort, "escort_key", "ESCORT", Keys.I, "Bring in or dismiss the escort.");
+        AddKey(keys, Act.Strike, "strike_key", "STRIKE", Keys.T,
+            "On escort, look at a target and press to have the Batwing take it down. Hold and sweep across targets to mark up to 6.");
+        AddKey(keys, Act.Lift, "lift_key", "LIFT", Keys.O, "Lift or fetch the Batmobile, or hook and drop it while flying.");
+        AddKey(keys, Act.Deck, "deck_key", "DECK", Keys.F4, "Open and close this deck.");
+        AddKey(keys, Act.Forward, "key_forward", "FORWARD", Keys.W, "Throttle up on the wings, forward in hover.", mouse: true);
+        AddKey(keys, Act.Back, "key_back", "BACK", Keys.S, "Throttle down on the wings, back in hover.", mouse: true);
+        AddKey(keys, Act.Left, "key_left", "LEFT", Keys.A, "Roll left on the wings, or rudder in direct control. Slide left in hover.", mouse: true);
+        AddKey(keys, Act.Right, "key_right", "RIGHT", Keys.D, "Roll right on the wings, or rudder in direct control. Slide right in hover.", mouse: true);
+        AddKey(keys, Act.Up, "key_up", "UP", Keys.Space, "Climb in hover.", mouse: true);
+        AddKey(keys, Act.Down, "key_down", "DOWN AND BRAKE", Keys.ControlKey, "Sink in hover, air brake on the wings.", mouse: true);
+        AddKey(keys, Act.Boost, "key_boost", "AFTERBURNER", Keys.ShiftKey, "Afterburner on the wings, fast in hover.", mouse: true);
+        AddKey(keys, Act.Mode, "key_mode", "HOVER OR WINGS", Keys.F, "Switch between hover and wings.", mouse: true);
+        AddKey(keys, Act.Bail, "key_bail", "BAIL OUT", Keys.E, "Bail out, or end remote control.", mouse: true);
+        AddKey(keys, Act.Gun, "key_gun", "GUNS", Keys.LButton, "Hold to fire the Vulcan gun.", mouse: true);
+        AddKey(keys, Act.Cannon, "key_cannon", "CANNON", Keys.Q, "Fire the heavy cannon.", mouse: true);
+        AddKey(keys, Act.Lock, "key_lock", "MISSILES", Keys.RButton,
+            "Hold to lock on, let go to fire. Tap the guns while locking to put another missile on what you aim at.", mouse: true);
+        AddKey(keys, Act.Look, "key_look", "LOOK AROUND", Keys.MButton, "Hold to look round without steering.", mouse: true);
+        AddKey(keys, Act.Camera, "key_camera", "CAMERA", Keys.C, "Change the camera.", mouse: true);
+        AddKey(keys, Act.Hints, "key_hints", "KEY HINTS", Keys.H, "Show or hide the flight keys.", mouse: true);
 
-        Page system = Add("system", "SYSTEM", "Deck settings.");
-        DeckOn = Add(system, "deck_on", "OPEN DECK ON", new[] { "gauntlet", "screen" }, new[] { "GAUNTLET", "SCREEN" },
-            "Where the deck opens. GAUNTLET has Batman raise his gauntlet and shows the deck on its hologram. In the Batmobile it shows over the dashboard and the car stops. While flying, gliding, fighting, in battle mode or by remote it opens on the screen.");
-        GauntletSize = Add(system, "gauntlet_size", "GAUNTLET SIZE", 1.25f, 1f, 1.8f, 0.05f, Fmt.Times,
-            "How big the gauntlet's hologram is while the deck is on it. The text gets smaller as it grows, so more fits on it. 1.00x is the game's own size.");
-        GauntletText = Add(system, "gauntlet_text", "GAUNTLET TEXT", 1f, 0.6f, 1.4f, 0.05f, Fmt.Times,
-            "Text size on the gauntlet, on top of how GAUNTLET SIZE shrinks it.");
-        DeckSize = Add(system, "deck_size", "DECK SIZE", 1f, 0.75f, 2f, 0.05f, Fmt.Times, "Deck scale. It shrinks to fit if the screen is too small.");
-        Effects = Add(system, "effects", "DECK EFFECTS", true, "Scanlines, glow and text animation. Turn off for a plain deck.");
-        Diagnostics = Add(system, "diagnostics", "DIAGNOSTICS", false, "Logs extra info to Batwing.log. Turn on if you're reporting a bug.");
-        Reset = Act(system, "reset", "RESET TO DEFAULTS", "Resets every setting to default. Press twice to confirm.", ResetAll);
+        Page pad = AddPage("controller", "CONTROLLER", "Controller settings and buttons.");
+        Controller = AddSwitch(pad, "controller", "CONTROLLER", true, "Controller support. Turn off if the mod picks up a pad you don't want it to.");
+        MenuChord = AddPick(pad, "menu_chord", "COMMAND WHEEL", new[] { "lb+rb", "ls+rs", "off" }, new[] { "HOLD LB + RB", "HOLD LS + RS", "OFF" }, 0,
+            "Hold to open the command wheel. Point the right stick at a command and let go to use it. The wheel has the call, remote, escort, strike, lift and this deck.");
+        PadAim = AddDial(pad, "pad_aim", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times, "How fast the right stick aims and steers.");
+        PadResponse = AddPick(pad, "pad_response", "AIM RESPONSE", new[] { "smooth", "linear", "precise" }, new[] { "SMOOTH", "LINEAR", "PRECISE" }, 0,
+            "How the stick picks up speed as you push it. SMOOTH is gentle in the middle and quick at the edge. LINEAR is even all the way. PRECISE is slower in the middle still, for fine aiming.");
+        Deadzone = AddDial(pad, "deadzone", "STICK DEADZONE", 0.2f, 0.05f, 0.4f, 0.01f, Fmt.Percent,
+            "How far a stick moves before it counts. Turn up if the Batwing creeps with the sticks let go.");
+        PadInvert = AddSwitch(pad, "pad_invert", "INVERT PITCH", false, "Pull the stick back to climb, like a flight stick.");
+        StickLayout = AddPick(pad, "stick_layout", "STICK LAYOUT", new[] { "standard", "swapped" }, new[] { "STANDARD", "SWAPPED" }, 0,
+            "STANDARD steers with the right stick and flies with the left. SWAPPED is the other way round.");
+        Rumble = AddSwitch(pad, "rumble", "VIBRATION", true, "The pad rumbles with the guns, hits, the afterburner and landings. The game's own vibration setting has to be on too.");
+        RumbleStrength = AddDial(pad, "rumble_strength", "VIBRATION STRENGTH", 1f, 0.25f, 1.5f, 0.05f, Fmt.Times, "How strong the rumble is.");
+        ButtonStyle = AddPick(pad, "button_style", "BUTTON PROMPTS", new[] { "xbox", "playstation" }, new[] { "XBOX", "PLAYSTATION" }, 0,
+            "Which buttons the hints and prompts show.");
+        AddButton(pad, Act.Mode, "pad_mode", "HOVER OR WINGS", PadButton.Y);
+        AddButton(pad, Act.Bail, "pad_bail", "BAIL OUT", PadButton.B);
+        AddButton(pad, Act.Gun, "pad_gun", "GUNS", PadButton.X);
+        AddButton(pad, Act.Cannon, "pad_cannon", "CANNON", PadButton.RB);
+        AddButton(pad, Act.Lock, "pad_lock", "MISSILES", PadButton.A);
+        AddButton(pad, Act.Look, "pad_look", "LOOK AROUND", PadButton.LB);
+        AddButton(pad, Act.Boost, "pad_fast", "FAST IN HOVER", PadButton.LS);
+        AddButton(pad, Act.Camera, "pad_camera", "CAMERA", PadButton.Up);
+        AddButton(pad, Act.Lift, "pad_lift", "HOOK OR DROP", PadButton.Down);
+
+        Page display = AddPage("display", "DISPLAY", "Camera and HUD.");
+        Camera = AddPick(display, "camera", "CAMERA", new[] { "chase", "far", "cockpit" }, new[] { "CHASE", "FAR CHASE", "COCKPIT" }, 0,
+            "Where the camera sits while you fly. The camera button switches it in flight.");
+        Hud = AddSwitch(display, "hud", "FLIGHT HUD", true, "Jet style HUD with speed, height, heading, pitch ladder, throttle, hull, gun heat and warnings.");
+        HudLayout = AddPick(display, "hud_layout", "HUD LAYOUT", new[] { "full", "minimal" }, new[] { "FULL", "MINIMAL" }, 0,
+            "FULL has the tapes and pitch ladder. MINIMAL keeps the aim, speed, height and warnings and leaves the view clear.");
+        Nav = AddSwitch(display, "nav", "WAYPOINT MARKER", true, "Shows your map waypoint or the mission marker on the HUD with how far it is.");
+        HudColour = AddPick(display, "hud_colour", "HUD COLOUR", new[] { "blue", "green", "amber", "white" }, new[] { "BLUE", "GREEN", "AMBER", "WHITE" }, 0,
+            "HUD and deck colour.");
+        HudSize = AddDial(display, "hud_size", "HUD SIZE", 1f, 0.7f, 1.4f, 0.05f, Fmt.Times, "HUD scale.");
+        SpeedUnit = AddPick(display, "speed_unit", "SPEED UNIT", new[] { "mph", "kmh", "ms" }, new[] { "MPH", "KM/H", "M/S" }, 0, "Speed unit on the HUD.");
+        Hints = AddSwitch(display, "hints", "KEY HINTS", true, "Shows the flight controls for a few seconds when you get in.");
+        HideGameHud = AddSwitch(display, "hide_game_hud", "HIDE GAME HUD", false, "Hides the game's own HUD while flying.");
+
+        Page system = AddPage("system", "SYSTEM", "Deck settings.");
+        DeckOn = AddPick(system, "deck_on", "OPEN DECK ON", new[] { "gauntlet", "screen" }, new[] { "GAUNTLET", "SCREEN" }, 0,
+            "GAUNTLET has Batman raise his gauntlet and shows the deck on its hologram. In the Batmobile it shows over the dashboard and the car stops. While flying, gliding or fighting it opens on the screen.");
+        GauntletSize = AddDial(system, "gauntlet_size", "GAUNTLET SIZE", 1.25f, 1f, 1.8f, 0.05f, Fmt.Times,
+            "How big the hologram is while the deck is on it. The text gets smaller as it grows so more fits.");
+        GauntletText = AddDial(system, "gauntlet_text", "GAUNTLET TEXT", 1f, 0.6f, 1.4f, 0.05f, Fmt.Times, "Text size on the gauntlet.");
+        DeckSize = AddDial(system, "deck_size", "DECK SIZE", 1f, 0.75f, 2f, 0.05f, Fmt.Times, "Deck scale on the screen. It shrinks to fit a small screen.");
+        Effects = AddSwitch(system, "effects", "DECK EFFECTS", true, "Scanlines, glow and text animation. Turn off for a plain deck.");
+        Diagnostics = AddSwitch(system, "diagnostics", "DIAGNOSTICS", false, "Writes extra detail to Batwing.log. Turn on if you're reporting a bug.");
+        Reset = Do(system, "reset", "RESET TO DEFAULTS", "Puts every setting back to its default. Press twice to confirm.", ResetAll);
         Reset.Confirm = true;
-        Reset.Note = () => "";
 
         Diagnostics.Changed = () => Log.Diagnostics = Diagnostics.On;
-        Controller.Changed = () => Pad.Enabled = Controller.On;
-    }
-
-    private static void ResetAll()
-    {
-        foreach (Option o in All)
-        {
-            if (o is Act)
-                continue;
-            bool was = o.IsDefault;
-            o.Reset();
-            if (!was)
-                Safe.Run(o.Id + " reset", () => o.Changed?.Invoke());
-        }
-
-        Settings.MarkDirty();
-        Readout.Toast("DECK", "DEFAULTS RESTORED", true);
+        RumbleStrength.Changed = () => Batwing.Rumble.Play(Buzz.Hit);
     }
 
     public static void ApplyAll()
@@ -185,14 +188,28 @@ internal static class Opt
             Safe.Run(o.Id + " apply", () => o.Changed?.Invoke());
     }
 
-    private static Page Add(string key, string title, string blurb)
+    private static void ResetAll()
+    {
+        foreach (Option o in All)
+        {
+            if (o is Command || o.IsDefault)
+                continue;
+            o.Reset();
+            Safe.Run(o.Id + " reset", () => o.Changed?.Invoke());
+        }
+
+        Settings.MarkDirty();
+        Toasts.Show("DEFAULTS RESTORED", true);
+    }
+
+    private static Page AddPage(string key, string title, string blurb)
     {
         var page = new Page(key, title, blurb);
         Pages.Add(page);
         return page;
     }
 
-    private static T Register<T>(Page page, T option) where T : Option
+    private static T Add<T>(Page page, T option) where T : Option
     {
         option.Page = page;
         page.Options.Add(option);
@@ -200,18 +217,21 @@ internal static class Opt
         return option;
     }
 
-    private static Switch Add(Page page, string id, string label, bool on, string help) =>
-        Register(page, new Switch { Id = id, Label = label, Help = help, On = on, Default = on });
+    private static Switch AddSwitch(Page page, string id, string label, bool on, string help) =>
+        Add(page, new Switch { Id = id, Label = label, Help = help, On = on, Default = on });
 
-    private static Dial Add(Page page, string id, string label, float value, float min, float max, float stride, Func<float, string> format, string help) =>
-        Register(page, new Dial { Id = id, Label = label, Help = help, Number = value, Default = value, Min = min, Max = max, Stride = stride, Format = format });
+    private static Dial AddDial(Page page, string id, string label, float value, float min, float max, float stride, Func<float, string> format, string help) =>
+        Add(page, new Dial { Id = id, Label = label, Help = help, Number = value, Default = value, Min = min, Max = max, Stride = stride, Format = format });
 
-    private static Pick Add(Page page, string id, string label, string[] keys, string[] labels, string help) =>
-        Register(page, new Pick { Id = id, Label = label, Help = help, Keys = keys, Labels = labels });
+    private static Pick AddPick(Page page, string id, string label, string[] keys, string[] labels, int initial, string help) =>
+        Add(page, new Pick { Id = id, Label = label, Help = help, Keys = keys, Labels = labels, Index = initial, Default = initial });
 
-    private static Bind Add(Page page, string id, string label, Keys key, string help) =>
-        Register(page, new Bind { Id = id, Label = label, Help = help, Key = key, Default = key });
+    private static void AddKey(Page page, Act act, string id, string label, Keys key, string help, bool mouse = false) =>
+        KeyBinds[act] = Add(page, new Bind { Id = id, Label = label, Help = help + " Press ENTER, then the new key.", Key = key, Default = key, For = act, Mouse = mouse });
 
-    private static Act Act(Page page, string id, string label, string help, Action run) =>
-        Register(page, new Act { Id = id, Label = label, Help = help, Run = run });
+    private static void AddButton(Page page, Act act, string id, string label, PadButton button) =>
+        PadBinds[act] = Add(page, new PadBind { Id = id, Label = label, Help = "Press A, then the new button. A button that's already used swaps with this one.", Button = button, Default = button, For = act });
+
+    private static Command Do(Page page, string id, string label, string help, Action run) =>
+        Add(page, new Command { Id = id, Label = label, Help = help, Run = run });
 }
