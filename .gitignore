@@ -7,7 +7,13 @@ settings.toml
 bin/
 obj/
 *.csproj
+!dev/Batwing.csproj
 *.sln
+
+# Release build, made by dev/pack.py
+Batwing.dll
+Batwing.pdb
+Batwing.zip
 
 # OS and editor clutter
 Thumbs.db

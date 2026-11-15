@@ -103,12 +103,13 @@ to SCREEN to always have it on the screen.
 
 ## Install
 
-1. Install [BmSDK-AK](https://github.com/Team-BmSDK/BmSDK-AK) v0.21.0, then unzip the zip from the
-   [latest release of XeTrinityz/BmSDK-AK](https://github.com/XeTrinityz/BmSDK-AK/releases/latest) over the game
-   folder. Batwing needs that fork's fixes and additions. It works on Steam and Epic copies of the game. On Epic,
-   use the manual install for v0.21.0 since its installer won't find the game. Epic support is new, so Steam has
-   had more testing.
-2. Put this folder in `Batman Arkham Knight/BmGame/Mods/` so you have `BmGame/Mods/Batwing/mod.toml`.
+1. Install [XeTrinityz/BmSDK-AK v0.24.0](https://github.com/XeTrinityz/BmSDK-AK/releases/tag/v0.24.0) or newer.
+   Run its installer, or copy the `Binaries` and `BmGame` folders from its zip into your game folder. Older BmSDK
+   builds don't run Batwing. It works on Steam and Epic copies of the game. Epic support is new, so Steam has had
+   more testing.
+2. Put the `Batwing` folder from the zip in `Batman Arkham Knight/BmGame/Mods/` so you have
+   `BmGame/Mods/Batwing/Batwing.dll`. When you update, copy it over the old one. Your settings stay. You can delete
+   an old `scripts` folder in there. It isn't used any more.
 3. Start the game, get out into the city and press **Y**.
 
 The Batwing only works out in the open city, not in interiors or during cutscenes.
