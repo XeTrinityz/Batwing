@@ -36,17 +36,46 @@ internal static class Wheel
     // While the wheel buttons and X are held the escort keeps marking strike targets.
     public static bool StrikeHeld => _shortcut && Pad.Down(PadButton.X);
 
-    public static PadButton Chord => Opt.MenuChord.Index switch
+    // Held to keep the wheel open, and pressed while it's held to open it. LB and RB together are both.
+    private static string Choice => Opt.MenuChord.Key;
+
+    private static bool Paired => Choice == "lb+rb";
+
+    private static bool Off => Choice == "off";
+
+    // Pressing a stick in can tilt it a little, so with a stick held only the other one picks.
+    private static bool StickHeld => !Flying && Choice is "ls+x" or "ls+a";
+
+    // Flying, these buttons are flight controls, so View opens the wheel there. The game doesn't use it in the cockpit.
+    private static bool Flying => Wing.Piloting && !Paired && !Off;
+
+    private static bool ModifierDown => Flying ? Pad.Down(PadButton.Back) : Choice switch
     {
-        0 => PadButton.LB | PadButton.RB,
-        1 => PadButton.LS | PadButton.RS,
-        _ => PadButton.None,
+        "ls+x" or "ls+a" => Pad.Down(PadButton.LS),
+        "lt+x" => Pad.LeftTrigger > 0.5f,
+        "lb+rb" => Pad.Down(PadButton.LB | PadButton.RB),
+        _ => false,
+    };
+
+    private static PadButton Trigger => Choice is "ls+a" ? PadButton.A : PadButton.X;
+
+    private static string TriggerName => Trigger == PadButton.X ? "XboxTypeS_X" : "XboxTypeS_A";
+
+    // The press that opens the wheel, for the deck to close itself on.
+    public static bool ChordPressed => !Off && (Flying ? Pad.Pressed(PadButton.Back) : Paired ? Pad.Pressed(PadButton.LB | PadButton.RB) : ModifierDown && Pad.Pressed(Trigger));
+
+    public static string ChordName => Flying ? Glyphs.Name(PadButton.Back) : Choice switch
+    {
+        "ls+x" => Glyphs.Name(PadButton.LS) + " + " + Glyphs.Name(PadButton.X),
+        "ls+a" => Glyphs.Name(PadButton.LS) + " + " + Glyphs.Name(PadButton.A),
+        "lt+x" => Glyphs.LeftTrigger + " + " + Glyphs.Name(PadButton.X),
+        "lb+rb" => Glyphs.Name(PadButton.LB | PadButton.RB),
+        _ => "",
     };
 
     public static void Frame(float dt)
     {
-        PadButton chord = Chord;
-        bool held = chord != PadButton.None && Pad.Down(chord);
+        bool held = !Off && ModifierDown;
 
         if (Deck.IsOpen)
         {
@@ -75,6 +104,22 @@ internal static class Wheel
         if (Open)
         {
             Choose();
+            return;
+        }
+
+        if (Flying)
+        {
+            Show();
+            return;
+        }
+
+        if (!Paired)
+        {
+            // With the modifier down, the button that opens the wheel is the mod's and the game doesn't get it.
+            // The modifier on its own is still the game's.
+            GameKeys.Hold(ShortcutHold, true, Array.Empty<Keys>(), new[] { TriggerName });
+            if (Pad.Pressed(Trigger))
+                Show();
             return;
         }
 
@@ -116,7 +161,7 @@ internal static class Wheel
             return;
         }
 
-        Vector2 v = Pad.RightRaw.Length() > Pad.LeftRaw.Length() ? Pad.RightRaw : Pad.LeftRaw;
+        Vector2 v = StickHeld || Pad.RightRaw.Length() > Pad.LeftRaw.Length() ? Pad.RightRaw : Pad.LeftRaw;
         if (v.Length() > Pick)
         {
             float angle = MathF.Atan2(v.Y, v.X) * Geo.Deg;
@@ -189,7 +234,7 @@ internal static class Wheel
         _ => "SETTINGS",
     };
 
-    public static string Shortcut(Item item) => item switch
+    public static string Shortcut(Item item) => !Paired ? "" : item switch
     {
         Item.Call => Glyphs.Name(PadButton.Y),
         Item.Remote => Glyphs.Name(PadButton.A),

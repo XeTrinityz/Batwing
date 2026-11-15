@@ -40,9 +40,9 @@ the car.
 
 ## Controller
 
-Hold **LB + RB** for the command wheel. Point a stick at a command and let go to use it. The wheel has the call,
-remote control, escort, strike, lift and the settings deck. While the wheel buttons are held you can also tap **Y** to
-call, **A** for remote, **B** for the escort, **X** to strike or **D-pad down** for the lift without opening the wheel.
+Hold the left stick in (**LS**) and press **A** for the command wheel, or **L3** and **Cross** on a PlayStation pad. Point the right stick at a command and let go
+of the left stick to use it. The wheel has the call, remote control, escort, strike, lift and the settings deck. While
+flying, hold **View** for the wheel instead. The wheel can also be set to LS + X, LT + X or LB + RB in the settings deck.
 
 The pad rumbles with the guns, hits, the afterburner and landings. Every flight button can be changed in the settings
 deck, along with aim speed, aim response, stick deadzone, inverted pitch and swapped sticks. Prompts can show Xbox or

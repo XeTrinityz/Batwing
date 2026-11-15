@@ -128,8 +128,8 @@ internal static class Opt
 
         Page pad = AddPage("controller", "CONTROLLER", "Controller settings and buttons.");
         Controller = AddSwitch(pad, "controller", "CONTROLLER", true, "Controller support. Turn off if the mod picks up a pad you don't want it to.");
-        MenuChord = AddPick(pad, "menu_chord", "COMMAND WHEEL", new[] { "lb+rb", "ls+rs", "off" }, new[] { "HOLD LB + RB", "HOLD LS + RS", "OFF" }, 0,
-            "Hold to open the command wheel. Point the right stick at a command and let go to use it. The wheel has the call, remote, escort, strike, lift and this deck.");
+        MenuChord = AddPick(pad, "menu_chord", "COMMAND WHEEL", new[] { "ls+a", "ls+x", "lt+x", "lb+rb", "off" }, new[] { "LS + A", "LS + X", "LT + X", "LB + RB", "OFF" }, 0,
+            "Hold the first button and press the second to open the command wheel. LS means pressing the left stick in. Point the right stick at a command and let go of the first button to use it. The wheel has the call, remote, escort, strike, lift and this deck. On its own the first button still does what it does in the game. While flying, hold VIEW instead.");
         PadAim = AddDial(pad, "pad_aim", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times, "How fast the right stick aims and steers.");
         PadResponse = AddPick(pad, "pad_response", "AIM RESPONSE", new[] { "smooth", "linear", "precise" }, new[] { "SMOOTH", "LINEAR", "PRECISE" }, 0,
             "How the stick picks up speed as you push it. SMOOTH is gentle in the middle and quick at the edge. LINEAR is even all the way. PRECISE is slower in the middle still, for fine aiming.");

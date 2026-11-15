@@ -196,7 +196,7 @@ internal static class Deck
             return;
         }
 
-        if (Wheel.Chord != PadButton.None && Pad.Pressed(Wheel.Chord))
+        if (Wheel.ChordPressed)
         {
             Close();
             return;

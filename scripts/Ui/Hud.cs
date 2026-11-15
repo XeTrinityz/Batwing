@@ -720,8 +720,8 @@ internal static class Hud
         rows.Add((Prompt.Of(Act.Camera), "CAMERA"));
         rows.Add((Prompt.Of(Act.Lift), pilot.Craft.Carrying ? "DROP BATMOBILE" : "HOOK BATMOBILE"));
         rows.Add((Prompt.Of(Act.Bail), pilot.Remote ? "END REMOTE" : "BAIL OUT"));
-        if (pad && Wheel.Chord != PadButton.None)
-            rows.Add((Prompt.Keys("", Glyphs.Name(Wheel.Chord)), "COMMAND WHEEL"));
+        if (pad && Wheel.ChordName.Length > 0)
+            rows.Add((Prompt.Keys("", Wheel.ChordName), "COMMAND WHEEL"));
         if (!pad)
             rows.Add((Prompt.Of(Act.Hints), "HIDE THESE KEYS"));
 
