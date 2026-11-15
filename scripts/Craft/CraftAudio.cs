@@ -71,7 +71,7 @@ internal sealed partial class Craft
         if (ev is not { IsValid: true } || on is not { IsValid: true })
             return;
 
-        Safe.Run("batwing sound", () => on.StartAudioEvent(ev, 0, 0));
+        Safe.Run("batwing sound", () => on.StartAudioEvent(ev, default, 0));
     }
 
     public void Whoosh(string path)
@@ -191,7 +191,7 @@ internal sealed class Voice
             voice.bCollideWorld = false;
             _actor = voice;
             _fade = -1f;
-            voice.StartAudioEvent(ev, 0, 0);
+            voice.StartAudioEvent(ev, default, 0);
         });
     }
 
@@ -202,7 +202,7 @@ internal sealed class Voice
             return;
 
         if (stop is { IsValid: true })
-            Safe.Run("batwing fly-in sound", () => voice.StartAudioEvent(stop, 0, 0));
+            Safe.Run("batwing fly-in sound", () => voice.StartAudioEvent(stop, default, 0));
         _killAt = Clock.Now + StopGrace;
     }
 

@@ -5,7 +5,7 @@ namespace Trinity.Batwing;
 // The mod's life: starting, the game tick, the draw, and stopping. Every call from the SDK comes through here.
 internal static class App
 {
-    public const string Version = "2.0.0";
+    public const string Version = "2.0.1";
     private const float MaxStep = 0.25f;
 
     private static FrameTimer _tick, _frame;

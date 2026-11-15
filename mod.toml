@@ -1,4 +1,4 @@
 name = "Batwing"
 author = "XeTrinityz"
-version = "2.0.0"
+version = "2.0.1"
 description = "Call in the Batwing and fly it around Gotham. Proper flight model with stalls and a VTOL hover, and it uses your Batmobile's weapons. Fly it by remote, have it escort you or have it carry the Batmobile. Y calls the Batwing, U remote control, I escort, T orders a strike, O lifts or fetches the Batmobile, F4 opens the settings deck. On a controller it flies GTA style. Hold View for the command wheel, a tap still opens the map. Every key and button can be changed in the deck."
