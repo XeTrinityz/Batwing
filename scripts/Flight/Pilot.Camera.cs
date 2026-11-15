@@ -55,8 +55,9 @@ internal sealed partial class Pilot
         float frac = Math.Clamp(speed / (_fm.TopSpeed * 1.4f), 0f, 1f);
         float wings = 1f - _fm.Hover;
 
-        // The view leans a little with the bank, more in direct control where the bank is all yours.
-        float leanWant = (Opt.Direct ? 36f : 14f) * MathF.Sin(_fm.Bank()) * wings;
+        // The view leans a little with the bank, more in direct control where the bank is all yours. GTA style
+        // keeps it nearly level, since its camera swings round freely and a lean looks wrong from the side.
+        float leanWant = (Opt.Gta ? 8f : Opt.Direct ? 36f : 14f) * MathF.Sin(_fm.Bank()) * wings;
         _camRoll += (leanWant - _camRoll) * Ease.Follow(5f, step);
 
         float baseFov = game.FOV > 1f ? game.FOV : 70f;

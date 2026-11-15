@@ -264,7 +264,7 @@ internal static class DeckView
             case PadBind pb:
                 if (Deck.Binding == pb)
                 {
-                    TextRight(x1, cy + U(1), "PRESS A BUTTON", Palette.Caution, s, blink ? 1f : 0.45f);
+                    TextRight(x1, cy + U(1), Deck.Swapped ?? "PRESS A BUTTON", Palette.Caution, s, blink ? 1f : 0.45f);
                     break;
                 }
 

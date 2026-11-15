@@ -25,6 +25,8 @@ internal enum Act
     Look,
     Camera,
     Hints,
+    Fire,
+    Weapon,
 }
 
 // Every control the mod reads, by what it does rather than which key or button it's on. Presses are counted
@@ -43,7 +45,14 @@ internal static class Controls
 
     public static Keys Key(Act a) => Opt.KeyBinds.TryGetValue(a, out Bind? b) ? b.Key : Keys.None;
 
-    public static PadButton Button(Act a) => Opt.PadBinds.TryGetValue(a, out PadBind? b) ? b.Button : PadButton.None;
+    // The button an action is on in the fly style in use. A row from the other style has none, and in GTA
+    // style the bumpers yaw, so an old bind left on one of them is ignored.
+    public static PadButton Button(Act a)
+    {
+        if (!Opt.PadBinds.TryGetValue(a, out PadBind? b) || !b.Active)
+            return PadButton.None;
+        return Opt.Gta && b.Button is PadButton.LB or PadButton.RB ? PadButton.None : b.Button;
+    }
 
     public static void KeyboardUsed() => _keysAt = Clock.Now;
 
@@ -70,9 +79,9 @@ internal static class Controls
 
         foreach (PadButton pressed in Pad.NewPresses())
         {
-            foreach ((Act act, PadBind b) in Opt.PadBinds)
+            foreach (Act act in Opt.PadBinds.Keys)
             {
-                if (b.Button == pressed)
+                if (Button(act) == pressed)
                     _presses[(int)act]++;
             }
         }
@@ -89,7 +98,10 @@ internal static class Controls
     // The stick that flies: throttle and roll on the wings, moving in hover. Even response.
     public static Vector2 FlyStick => Listening ? Shape(Swapped ? Pad.RightRaw : Pad.LeftRaw, Opt.Deadzone.Number, 1f) : Vector2.Zero;
 
-    // The stick that aims and steers, with the response and invert the player picked.
+    private static float Response => Opt.PadResponse.Index switch { 1 => 1f, 2 => 2.6f, _ => 0f };
+
+    // The stick that aims and steers, with the response and invert the player picked. In GTA style it only
+    // moves the camera, and the invert is on the stick that flies.
     public static Vector2 AimStick
     {
         get
@@ -97,10 +109,26 @@ internal static class Controls
             if (!Listening)
                 return Vector2.Zero;
 
-            Vector2 v = Shape(Swapped ? Pad.LeftRaw : Pad.RightRaw, Opt.Deadzone.Number, Opt.PadResponse.Index switch { 1 => 1f, 2 => 2.6f, _ => 0f });
-            return Opt.PadInvert.On ? v with { Y = -v.Y } : v;
+            Vector2 v = Shape(Swapped ? Pad.LeftRaw : Pad.RightRaw, Opt.Deadzone.Number, Response);
+            return Opt.PadInvert.On && !Opt.Gta ? v with { Y = -v.Y } : v;
         }
     }
+
+    // GTA style flies on this stick, roll and pitch, with pull back to climb unless pitch is inverted.
+    public static Vector2 GtaStick
+    {
+        get
+        {
+            if (!Listening)
+                return Vector2.Zero;
+
+            Vector2 v = Shape(Swapped ? Pad.RightRaw : Pad.LeftRaw, Opt.Deadzone.Number, Response);
+            return Opt.PadInvert.On ? v : v with { Y = -v.Y };
+        }
+    }
+
+    // GTA style yaws on the bumpers, right is positive.
+    public static float Bumpers => Listening && Opt.Gta ? (Pad.Down(PadButton.RB) ? 1f : 0f) - (Pad.Down(PadButton.LB) ? 1f : 0f) : 0f;
 
     public static float RightTrigger => Listening ? Pad.RightTrigger : 0f;
 

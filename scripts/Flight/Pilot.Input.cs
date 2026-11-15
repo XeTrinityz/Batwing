@@ -4,6 +4,14 @@ using BmSDK.BmGame;
 
 namespace Trinity.Batwing;
 
+// The weapon GTA style's fire button uses.
+internal enum Armament
+{
+    Guns,
+    Cannon,
+    Missiles,
+}
+
 internal sealed partial class Pilot
 {
     private const float AimPitchLimit = 80f;
@@ -18,12 +26,23 @@ internal sealed partial class Pilot
     // How far the pad's aim may lead the flight path, and how soft the end of that leash is.
     private const float PadLeadYaw = 40f, PadLeadPitch = 32f, PadLeashSoft = 0.4f;
 
+    // GTA style. How fast the bumpers turn in hover, and how long the camera waits before it swings back behind.
+    private const float GtaHoverTurn = 90f, GtaLookWait = 1.2f;
+
+    // GTA style roll. How much sideways a full pull back ignores, and the share of full roll rate the stick gets.
+    private const float GtaRollDead = 0.3f, GtaRollRate = 0.7f;
+
     // Where mouse aim points, and the free look on top of it.
     private float _aimYaw, _aimPitch, _lookYaw, _lookPitch;
     private bool _haveLast;
     private float _lastYaw, _lastPitch;
     private double _recentreUntil = -1.0;
     private Vector2 _turn, _virtualStick;
+    private float _lookIdle;
+    private bool _wasDirect;
+    private Armament _armament;
+
+    public Armament Armament => _armament;
 
     private nint _pinCam;
     private bool _pinned;
@@ -91,6 +110,8 @@ internal sealed partial class Pilot
         _aimYaw = _fm.HoverWanted ? r.Yaw : Geo.YawOf(_fm.Forward);
         _aimPitch = _fm.HoverWanted ? Math.Clamp(Geo.WrapDegrees(r.Pitch), -25f, 15f) : _fm.Pitch() * Geo.Deg;
         _lookYaw = _lookPitch = 0f;
+        _lookIdle = 0f;
+        _wasDirect = Opt.Direct;
         _haveLast = false;
         _virtualStick = Vector2.Zero;
     }
@@ -102,19 +123,37 @@ internal sealed partial class Pilot
         _turn = Vector2.Zero;
         Vector2 stick = Controls.AimStick;
         Vector2 rate = new Vector2(PadTurnRate, PadPitchRate) * (Opt.PadAim.Number * dt);
+        float lookRate = PadLookRate * Opt.PadAim.Number * dt;
+
+        // In GTA style the aim stick is only the camera. It stays where it's left for a moment, then swings
+        // back behind. The mouse still flies, unless it's looking round.
+        if (Opt.Gta)
+        {
+            bool looking = Controls.Down(Act.Look) || _landed;
+            Vector2 t = stick * lookRate + (looking ? turn : Vector2.Zero);
+            if (t != Vector2.Zero)
+            {
+                LookBy(t);
+                _lookIdle = 0f;
+            }
+            else
+            {
+                _lookIdle += dt;
+                if (_lookIdle > GtaLookWait)
+                    LookBack(dt, 3f);
+            }
+
+            return looking ? Vector2.Zero : turn;
+        }
 
         // Parked it shouldn't spin on the spot, so looking round is free look until it lifts off.
         if (Controls.Down(Act.Look) || _landed)
         {
-            Vector2 t = turn + stick * (PadLookRate * Opt.PadAim.Number * dt);
-            _lookYaw = Geo.WrapDegrees(_lookYaw + t.X);
-            _lookPitch = Math.Clamp(_lookPitch + t.Y, -LookLimit, LookLimit);
+            LookBy(turn + stick * lookRate);
             return Vector2.Zero;
         }
 
-        float back = Ease.Follow(5f, MathF.Max(dt, 1f / 60f));
-        _lookYaw -= _lookYaw * back;
-        _lookPitch -= _lookPitch * back;
+        LookBack(dt, 5f);
 
         if (Opt.Direct)
             return _fm.HoverWanted ? turn + stick * rate : turn;
@@ -132,6 +171,19 @@ internal sealed partial class Pilot
         _aimYaw = Geo.WrapDegrees(_aimYaw + turn.X);
         _aimPitch = Math.Clamp(_aimPitch + turn.Y, -AimPitchLimit, AimPitchLimit);
         return Vector2.Zero;
+    }
+
+    private void LookBy(Vector2 t)
+    {
+        _lookYaw = Geo.WrapDegrees(_lookYaw + t.X);
+        _lookPitch = Math.Clamp(_lookPitch + t.Y, -LookLimit, LookLimit);
+    }
+
+    private void LookBack(float dt, float rate)
+    {
+        float back = Ease.Follow(rate, MathF.Max(dt, 1f / 60f));
+        _lookYaw -= _lookYaw * back;
+        _lookPitch -= _lookPitch * back;
     }
 
     // The stick moves the aim and it stays where it's left, so the view doesn't spring back. It's kept on a
@@ -166,8 +218,11 @@ internal sealed partial class Pilot
 
     private FlightInput Gather(bool listening, float dt)
     {
-        Vector2 turn = listening ? Steer(dt) : Vector2.Zero;
         bool direct = Opt.Direct;
+        if (direct != _wasDirect)
+            Handover(direct);
+
+        Vector2 turn = listening ? Steer(dt) : Vector2.Zero;
         var input = new FlightInput { Assist = Opt.AssistLevel, Banking = Opt.BankLevel, Heading = _aimYaw / Geo.Deg, Hold = Opt.HoverHold.On };
         if (!listening)
         {
@@ -177,6 +232,10 @@ internal sealed partial class Pilot
 
         Vector2 fly = Controls.FlyStick;
         bool hover = _fm.HoverWanted;
+        bool gta = Opt.Gta;
+        if (gta && !hover)
+            return GtaWings(input, turn, dt);
+
         if (!hover)
         {
             // The fly stick is throttle and roll at once. It snaps to one axis so pushing for throttle doesn't roll.
@@ -198,6 +257,9 @@ internal sealed partial class Pilot
             input.Boost = Controls.Down(Act.Boost);
             if (direct)
                 _aimYaw += turn.X;
+            if (gta)
+                _aimYaw += Controls.Bumpers * GtaHoverTurn * dt;
+            _aimYaw = Geo.WrapDegrees(_aimYaw);
             input.Heading = _aimYaw / Geo.Deg;
             return input;
         }
@@ -207,11 +269,7 @@ internal sealed partial class Pilot
         input.Brake = MathF.Max(Controls.Down(Act.Down) ? 1f : 0f, lt);
         if (direct)
         {
-            // The mouse nudges a stick that springs back to the middle. The pad's stick is the stick.
-            _virtualStick += turn * 0.09f;
-            _virtualStick *= MathF.Exp(-6f * dt);
-            _virtualStick = Vector2.Clamp(_virtualStick, -Vector2.One, Vector2.One);
-            Vector2 stick = Vector2.Clamp(_virtualStick + Controls.AimStick, -Vector2.One, Vector2.One);
+            Vector2 stick = Vector2.Clamp(MouseStick(turn, dt) + Controls.AimStick, -Vector2.One, Vector2.One);
             input.Direct = true;
             input.Stick = new Vector3(stick.X, stick.Y, x);
         }
@@ -224,15 +282,83 @@ internal sealed partial class Pilot
         return input;
     }
 
+    // GTA style swaps with the keyboard's control mode as the player picks up the pad or the mouse. Mouse aim
+    // starts on the flight path so it doesn't swerve to an old aim, and the direct camera starts where mouse aim
+    // was looking so the view doesn't jump.
+    private void Handover(bool direct)
+    {
+        _wasDirect = direct;
+        _virtualStick = Vector2.Zero;
+        if (direct)
+        {
+            _camLook = Geo.Dir(_aimYaw, _aimPitch);
+            return;
+        }
+
+        Vector3 path = _fm.Velocity.Length() > 1500f && !_fm.HoverWanted ? Vector3.Normalize(_fm.Velocity) : _fm.Forward;
+        _aimYaw = _fm.HoverWanted ? Geo.YawOf(_fm.Forward) : Geo.YawOf(path);
+        _aimPitch = _fm.HoverWanted ? Math.Clamp(Geo.PitchOf(_camLook), -25f, 15f) : Math.Clamp(Geo.PitchOf(path), -AimPitchLimit, AimPitchLimit);
+    }
+
+    // GTA style on the wings. The fly stick rolls and pitches, the triggers move the throttle, the bumpers yaw
+    // and the afterburner is its own button. The keys work as they do in direct control.
+    private FlightInput GtaWings(FlightInput input, Vector2 turn, float dt)
+    {
+        float rt = Controls.RightTrigger, lt = Controls.LeftTrigger;
+
+        // A thumb pulling back drifts sideways, so the harder the pull the more roll it takes to count. Full
+        // roll is also slower than direct control's, since the stick does pitch as well.
+        Vector2 pad = Controls.GtaStick;
+        float dead = GtaRollDead * MathF.Abs(pad.Y);
+        pad.X = MathF.Sign(pad.X) * MathF.Max(0f, MathF.Abs(pad.X) - dead) / (1f - dead) * GtaRollRate;
+        Vector2 stick = Vector2.Clamp(MouseStick(turn, dt) + pad, -Vector2.One, Vector2.One);
+        float yaw = Math.Clamp(Controls.Axis(Act.Right, Act.Left) + Controls.Bumpers, -1f, 1f);
+        input.Throttle = Math.Clamp(Controls.Axis(Act.Forward, Act.Back) + rt - lt, -1f, 1f);
+        input.Boost = Controls.Down(Act.Boost);
+        input.Brake = MathF.Max(Controls.Down(Act.Down) ? 1f : 0f, lt);
+        input.Direct = true;
+        input.HoldBank = true;
+        input.Stick = new Vector3(stick.X, stick.Y, yaw);
+        return input;
+    }
+
+    // The mouse nudges a stick that springs back to the middle. The pad's stick is the stick.
+    private Vector2 MouseStick(Vector2 turn, float dt)
+    {
+        _virtualStick += turn * 0.09f;
+        _virtualStick *= MathF.Exp(-6f * dt);
+        _virtualStick = Vector2.Clamp(_virtualStick, -Vector2.One, Vector2.One);
+        return _virtualStick;
+    }
+
     private Orders PlayerOrders(bool listening)
     {
         // The gun press is read every frame so a click held from before the lock doesn't count as a tap.
         bool tap = _press.Take(Act.Gun);
         bool cannon = _press.Take(Act.Cannon);
         bool lockHeld = listening && Controls.Down(Act.Lock);
+        bool gun = listening && Controls.Down(Act.Gun);
+
+        // GTA style's one fire button uses whichever weapon is picked. The switch tapped while locking missiles
+        // puts another one on, like tapping the guns does.
+        bool fired = _press.Take(Act.Fire);
+        bool switched = _press.Take(Act.Weapon);
+        if (listening && Opt.Gta)
+        {
+            bool fire = Controls.Down(Act.Fire);
+            if (switched && fire && _armament == Armament.Missiles)
+                tap = true;
+            else if (switched)
+                NextWeapon();
+
+            gun |= fire && _armament == Armament.Guns;
+            cannon |= fired && _armament == Armament.Cannon;
+            lockHeld |= fire && _armament == Armament.Missiles;
+        }
+
         return new Orders
         {
-            Gun = listening && Controls.Down(Act.Gun) && !lockHeld,
+            Gun = gun && !lockHeld,
             Stack = listening && tap && lockHeld,
             Cannon = listening && cannon,
             Lock = lockHeld,
@@ -241,6 +367,22 @@ internal sealed partial class Pilot
             Homing = Opt.CannonHoming.On,
         };
     }
+
+    private void NextWeapon()
+    {
+        if (!Opt.Weapons.On)
+            return;
+
+        _armament = (Armament)(((int)_armament + 1) % 3);
+        Wing.Toast(WeaponName(_armament));
+    }
+
+    public static string WeaponName(Armament a) => a switch
+    {
+        Armament.Cannon => "CANNON",
+        Armament.Missiles => "MISSILES",
+        _ => "GUNS",
+    };
 
     // The game camera's pitch limits are opened right up so the mouse can aim anywhere.
     private void Pin()

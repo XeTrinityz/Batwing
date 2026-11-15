@@ -44,6 +44,15 @@ Everything the mod does on a controller is on one button. Hold **View** (the tou
 PlayStation pad) for the command wheel, point a stick at a command and let go to use it. The wheel has the call, remote
 control, escort, strike, lift and the settings deck. A quick tap of **View** still opens the map as normal.
 
+**GTA fly style.** On a controller it flies like a GTA jet by default. Set **FLY STYLE** to STANDARD on the CONTROLLER
+page for the mouse aim style layout in the table below. The left stick rolls and
+pitches, pull back to climb. **RT** and **LT** move the throttle up and down, and **LT** brakes too. **LB** and **RB**
+yaw. The right stick only moves the camera, and it swings back behind you a moment after you let go. Click the left
+stick for the afterburner. **A** fires and **X** switches between the guns, cannon and missiles. Hold **A** for the
+guns or to lock missiles, and tap **X** while locking to add another missile. In hover the left stick moves, the
+triggers climb and sink and the bumpers turn. It's only for the controller. Pick up the mouse and the Batwing flies
+with your CONTROL MODE again, and back on the pad it's GTA style.
+
 The pad rumbles with the guns, hits, the afterburner and landings. Every flight button can be changed in the settings
 deck, along with aim speed, aim response, stick deadzone, inverted pitch and swapped sticks. Prompts can show Xbox or
 PlayStation buttons.
@@ -62,7 +71,7 @@ the two swap over.
 | **O** | Lift, fetch, hook or drop the Batmobile |
 | **F4** | Settings deck |
 
-In the cockpit:
+In the cockpit, with the controller on the STANDARD fly style:
 
 | Keyboard | Controller | What it does |
 |---|---|---|

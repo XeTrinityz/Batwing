@@ -209,12 +209,29 @@ internal sealed class Bind : Option
     };
 }
 
+// Which fly style a controller button is used in.
+internal enum PadStyle
+{
+    Both,
+    Standard,
+    Gta,
+}
+
 // A controller button for one action.
 internal sealed class PadBind : Option
 {
     public PadButton Button;
     public PadButton Default;
     public Act For;
+    public PadStyle Style;
+
+    public bool Active => Style == PadStyle.Both || Style == (Opt.Gta ? PadStyle.Gta : PadStyle.Standard);
+
+    // Two rows only clash if they can be used at the same time.
+    public bool Shares(PadBind other) => Style == PadStyle.Both || other.Style == PadStyle.Both || Style == other.Style;
+
+    // LB and RB yaw in GTA style, so only rows that are never used there can have them.
+    public bool Fits(PadButton b) => Style == PadStyle.Standard || b is not (PadButton.LB or PadButton.RB);
 
     public override string Value => Glyphs.Name(Button);
 

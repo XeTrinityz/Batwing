@@ -22,7 +22,7 @@ internal static class Opt
 
     public static Switch Controller = null!, PadInvert = null!, Rumble = null!;
     public static Dial PadAim = null!, Deadzone = null!, RumbleStrength = null!;
-    public static Pick PadResponse = null!, StickLayout = null!, ButtonStyle = null!;
+    public static Pick FlyStyle = null!, PadResponse = null!, StickLayout = null!, ButtonStyle = null!;
     public static Switch CommandWheel = null!;
 
     public static Pick Camera = null!, HudColour = null!, HudLayout = null!, SpeedUnit = null!;
@@ -33,7 +33,11 @@ internal static class Opt
     public static Dial GauntletSize = null!, GauntletText = null!, DeckSize = null!;
     public static Switch Effects = null!, Diagnostics = null!;
 
-    public static bool Direct => ControlMode.Index == 1;
+    // GTA style flies on the stick like direct control.
+    public static bool Direct => ControlMode.Index == 1 || Gta;
+
+    // GTA style is only for the pad. Back on the mouse and keys it flies with the control mode again.
+    public static bool Gta => FlyStyle.Index == 1 && Controls.PadActive;
 
     public static bool DeckOnGauntlet => DeckOn.Index == 0;
 
@@ -104,7 +108,7 @@ internal static class Opt
 
         Page keys = AddPage("keyboard", "KEYBOARD", "Mouse and keyboard controls.");
         ControlMode = AddPick(keys, "control_mode", "CONTROL MODE", new[] { "aim", "direct" }, new[] { "MOUSE AIM", "DIRECT" }, 0,
-            "MOUSE AIM flies the Batwing towards where you look and banks it into turns for you. DIRECT puts the mouse or right stick on pitch and roll like a joystick, with the roll keys on the rudder.");
+            "MOUSE AIM flies the Batwing towards where you look and banks it into turns for you. DIRECT puts the mouse or right stick on pitch and roll like a joystick, with the roll keys on the rudder. The GTA fly style on the controller page is only for the pad and leaves the mouse and keys on this.");
         MouseAim = AddDial(keys, "mouse_aim", "MOUSE SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times,
             "How fast the mouse aims. It stacks with the game's own mouse sensitivity.");
         AddKey(keys, Act.Call, "call_key", "CALL", Keys.Y, "Call, wave off or bail out.");
@@ -133,29 +137,37 @@ internal static class Opt
 
         Page pad = AddPage("controller", "CONTROLLER", "Controller settings and buttons.");
         Controller = AddSwitch(pad, "controller", "CONTROLLER", true, "Controller support. Turn off if the mod picks up a pad you don't want it to.");
+        FlyStyle = AddPick(pad, "fly_style", "FLY STYLE", new[] { "standard", "gta" }, new[] { "STANDARD", "GTA" }, 1,
+            "STANDARD aims with the right stick and flies with the left. GTA flies like a GTA jet. The left stick rolls and pitches, the triggers are the throttle, the bumpers yaw and the right stick only moves the camera. One button fires and another picks the weapon. The mouse and keys keep the CONTROL MODE from the keyboard page, and it swaps over to whichever you use.");
         CommandWheel = AddSwitch(pad, "command_wheel", "COMMAND WHEEL", true,
             "Hold VIEW for the command wheel. Point a stick at a command and let go to use it. The wheel has the call, remote, escort, strike, lift and this deck. A quick tap of VIEW still opens the map. Turn off to leave VIEW to the game.");
-        PadAim = AddDial(pad, "pad_aim", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times, "How fast the right stick aims and steers.");
+        PadAim = AddDial(pad, "pad_aim", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times, "How fast the right stick aims and steers, or moves the camera in GTA style.");
         PadResponse = AddPick(pad, "pad_response", "AIM RESPONSE", new[] { "smooth", "linear", "precise" }, new[] { "SMOOTH", "LINEAR", "PRECISE" }, 0,
             "How the stick picks up speed as you push it. SMOOTH is gentle in the middle and quick at the edge. LINEAR is even all the way. PRECISE is slower in the middle still, for fine aiming.");
         Deadzone = AddDial(pad, "deadzone", "STICK DEADZONE", 0.2f, 0.05f, 0.4f, 0.01f, Fmt.Percent,
             "How far a stick moves before it counts. Turn up if the Batwing creeps with the sticks let go.");
-        PadInvert = AddSwitch(pad, "pad_invert", "INVERT PITCH", false, "Pull the stick back to climb, like a flight stick.");
+        PadInvert = AddSwitch(pad, "pad_invert", "INVERT PITCH", false,
+            "Flips which way the stick pitches. STANDARD normally climbs when you push up and GTA when you pull back.");
         StickLayout = AddPick(pad, "stick_layout", "STICK LAYOUT", new[] { "standard", "swapped" }, new[] { "STANDARD", "SWAPPED" }, 0,
             "STANDARD steers with the right stick and flies with the left. SWAPPED is the other way round.");
         Rumble = AddSwitch(pad, "rumble", "VIBRATION", true, "The pad rumbles with the guns, hits, the afterburner and landings. The game's own vibration setting has to be on too.");
         RumbleStrength = AddDial(pad, "rumble_strength", "VIBRATION STRENGTH", 1f, 0.25f, 1.5f, 0.05f, Fmt.Times, "How strong the rumble is.");
         ButtonStyle = AddPick(pad, "button_style", "BUTTON PROMPTS", new[] { "xbox", "playstation" }, new[] { "XBOX", "PLAYSTATION" }, 0,
             "Which buttons the hints and prompts show.");
-        AddButton(pad, Act.Mode, "pad_mode", "HOVER OR WINGS", PadButton.Y);
-        AddButton(pad, Act.Bail, "pad_bail", "BAIL OUT", PadButton.B);
-        AddButton(pad, Act.Gun, "pad_gun", "GUNS", PadButton.X);
-        AddButton(pad, Act.Cannon, "pad_cannon", "CANNON", PadButton.RB);
-        AddButton(pad, Act.Lock, "pad_lock", "MISSILES", PadButton.A);
-        AddButton(pad, Act.Look, "pad_look", "LOOK AROUND", PadButton.LB);
-        AddButton(pad, Act.Boost, "pad_fast", "FAST IN HOVER", PadButton.LS);
-        AddButton(pad, Act.Camera, "pad_camera", "CAMERA", PadButton.Up);
-        AddButton(pad, Act.Lift, "pad_lift", "HOOK OR DROP", PadButton.Down);
+        AddButton(pad, Act.Mode, "pad_mode", "HOVER OR WINGS", PadButton.Y, PadStyle.Both, "");
+        AddButton(pad, Act.Bail, "pad_bail", "BAIL OUT", PadButton.B, PadStyle.Both, "");
+        AddButton(pad, Act.Boost, "pad_fast", "AFTERBURNER", PadButton.LS, PadStyle.Both,
+            "Fast in hover. On the wings the right trigger fires the afterburner too in STANDARD style.");
+        AddButton(pad, Act.Camera, "pad_camera", "CAMERA", PadButton.Up, PadStyle.Both, "");
+        AddButton(pad, Act.Lift, "pad_lift", "HOOK OR DROP", PadButton.Down, PadStyle.Both, "");
+        AddButton(pad, Act.Gun, "pad_gun", "GUNS", PadButton.X, PadStyle.Standard, "STANDARD style only.");
+        AddButton(pad, Act.Cannon, "pad_cannon", "CANNON", PadButton.RB, PadStyle.Standard, "STANDARD style only.");
+        AddButton(pad, Act.Lock, "pad_lock", "MISSILES", PadButton.A, PadStyle.Standard, "STANDARD style only.");
+        AddButton(pad, Act.Look, "pad_look", "LOOK AROUND", PadButton.LB, PadStyle.Standard, "STANDARD style only.");
+        AddButton(pad, Act.Fire, "pad_fire", "GTA FIRE", PadButton.A, PadStyle.Gta,
+            "GTA style only. Fires the weapon you picked. Hold for the guns or to lock missiles, and let go to fire them.");
+        AddButton(pad, Act.Weapon, "pad_weapon", "GTA SWITCH WEAPON", PadButton.X, PadStyle.Gta,
+            "GTA style only. Picks the guns, cannon or missiles. Tap it while locking missiles to put another one on what you aim at.");
 
         Page display = AddPage("display", "DISPLAY", "Camera and HUD.");
         Camera = AddPick(display, "camera", "CAMERA", new[] { "chase", "far", "cockpit" }, new[] { "CHASE", "FAR CHASE", "COCKPIT" }, 0,
@@ -234,8 +246,17 @@ internal static class Opt
     private static void AddKey(Page page, Act act, string id, string label, Keys key, string help, bool mouse = false) =>
         KeyBinds[act] = Add(page, new Bind { Id = id, Label = label, Help = help + " Press ENTER, then the new key.", Key = key, Default = key, For = act, Mouse = mouse });
 
-    private static void AddButton(Page page, Act act, string id, string label, PadButton button) =>
-        PadBinds[act] = Add(page, new PadBind { Id = id, Label = label, Help = "Press A, then the new button. A button that's already used swaps with this one.", Button = button, Default = button, For = act });
+    private static void AddButton(Page page, Act act, string id, string label, PadButton button, PadStyle style, string help) =>
+        PadBinds[act] = Add(page, new PadBind
+        {
+            Id = id,
+            Label = label,
+            Help = (help.Length > 0 ? help + " " : "") + "Press A, then the new button. A button that's already used swaps with this one.",
+            Button = button,
+            Default = button,
+            For = act,
+            Style = style,
+        });
 
     private static Command Do(Page page, string id, string label, string help, Action run) =>
         Add(page, new Command { Id = id, Label = label, Help = help, Run = run });

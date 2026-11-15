@@ -27,6 +27,9 @@ internal struct FlightInput
     public Vector3 Stick;
     public bool Direct;
 
+    // Direct control: the wings stay at the bank they're left at, and full assist only levels small banks.
+    public bool HoldBank;
+
     // Manual roll on top of mouse aim, -1 to 1.
     public float Roll;
 
@@ -109,6 +112,9 @@ internal sealed class FlightModel
 
     private const float LevelGain = 2.5f;
 
+    // With the bank held, banks under this still level out, radians.
+    private const float HoldFrom = 0.25f;
+
     // Hover station keeping, the spring back to the held spot and height.
     private const float HoldSpring = 1.2f;
     private const float HoldPullMost = 600f;
@@ -161,6 +167,7 @@ internal sealed class FlightModel
     private Vector3 _lastDir = Vector3.UnitX;
     private Vector3? _holdAt;
     private float? _holdZ;
+    private float? _heldBank;
 
     private float Drag0 => ThrustToWeight * Gravity / (TopSpeed * TopSpeed);
 
@@ -194,6 +201,7 @@ internal sealed class FlightModel
         Rates = Vector3.Zero;
         _lastDir = velocity.LengthSquared() > 1f ? Vector3.Normalize(velocity) : Forward;
         _pathSpin = Vector3.Zero;
+        _heldBank = null;
         Release();
     }
 
@@ -232,6 +240,10 @@ internal sealed class FlightModel
 
     private void Substep(float dt, in FlightInput input)
     {
+        // A bank held from before hover or another control mode is stale.
+        if (!input.HoldBank || HoverWanted)
+            _heldBank = null;
+
         Hover = Approach(Hover, HoverWanted ? 1f : 0f, dt / ModeSeconds);
         float hover = Smooth(Hover);
         float wings = 1f - hover;
@@ -485,8 +497,17 @@ internal sealed class FlightModel
     private Vector3 StickRates(in FlightInput input)
     {
         Vector3 rates = input.Stick * WingRates;
-        if (input.Assist == Assist.Full && MathF.Abs(input.Stick.X) < 0.05f)
+        if (input.HoldBank)
+        {
+            // The roll eases over from the stick to the bank hold, so a thumb resting near the middle doesn't
+            // flick between the two.
+            float hold = HeldRoll(input.Assist, MathF.Abs(input.Stick.X) < 0.02f);
+            rates.X += (hold - rates.X) * (1f - Smooth(MathF.Abs(input.Stick.X) / 0.12f));
+        }
+        else if (input.Assist == Assist.Full && MathF.Abs(input.Stick.X) < 0.05f)
+        {
             rates.X = Level(input.Assist);
+        }
 
         // Assist keeps the turn coordinated, so the rudder isn't needed to stop it skidding.
         if (input.Assist != Assist.Off && MathF.Abs(input.Stick.Z) < 0.05f)
@@ -496,6 +517,23 @@ internal sealed class FlightModel
     }
 
     private float Level(Assist assist) => assist == Assist.Full ? -Bank() * LevelGain : 0f;
+
+    // Keeps the bank the stick left it at. Pulling round in a bank tilts the wings against the horizon, so a
+    // roll rate of nothing would still let the bank creep. Full assist levels small banks. Near the vertical the
+    // bank reads half a turn out, so it isn't held there or a loop would roll over at the top.
+    private float HeldRoll(Assist assist, bool free)
+    {
+        if (!free || assist == Assist.Off || MathF.Abs(Forward.Z) > 0.85f)
+        {
+            _heldBank = null;
+            return 0f;
+        }
+
+        float bank = Bank();
+        _heldBank ??= bank;
+        float want = assist == Assist.Full && MathF.Abs(_heldBank.Value) < HoldFrom ? 0f : _heldBank.Value;
+        return WrapPi(want - bank) * LevelGain;
+    }
 
     // Stall protection. The pitch is held to what keeps the angle of attack under the stall, and past it
     // the nose is pushed back down, since a falling path raises the angle of attack with no pitch at all.

@@ -414,16 +414,33 @@ internal static class Deck
 
     private static void TakeButton(PadBind bind, PadButton button)
     {
-        Binding = null;
         if (button == bind.Button)
-            return;
-
-        Swapped = null;
-        foreach (PadBind other in Opt.PadBinds.Values)
         {
-            if (other == bind || other.Button != button)
-                continue;
+            Binding = null;
+            return;
+        }
 
+        // Refused, it keeps waiting for another button like a refused key does.
+        if (!bind.Fits(button))
+        {
+            Swapped = Glyphs.Name(PadButton.LB) + " AND " + Glyphs.Name(PadButton.RB) + " YAW IN GTA STYLE";
+            _padWaitRelease = true;
+            return;
+        }
+
+        // Rows from different fly styles are never used together, so they can share a button.
+        var moving = Opt.PadBinds.Values.Where(o => o != bind && o.Button == button && o.Shares(bind)).ToList();
+        if (moving.Find(o => !o.Fits(bind.Button)) is { } stuck)
+        {
+            Swapped = "THAT WOULD PUT " + stuck.Label + " ON " + Glyphs.Name(bind.Button);
+            _padWaitRelease = true;
+            return;
+        }
+
+        Binding = null;
+        Swapped = null;
+        foreach (PadBind other in moving)
+        {
             other.Button = bind.Button;
             Changed(other);
             Swapped = other.Label + " MOVED TO " + Glyphs.Name(other.Button);

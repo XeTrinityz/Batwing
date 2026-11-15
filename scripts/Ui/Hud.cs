@@ -538,6 +538,15 @@ internal static class Hud
             Meter(mx, y, mwid, guns.Overheated ? "GUN HOT" : "GUN", guns.Heat, heat, false);
         }
 
+        // GTA style fires one weapon at a time, so the pad player needs to see which.
+        if (armed && Opt.Gta)
+        {
+            y += U(26);
+            string weapon = "WEAPON  " + Pilot.WeaponName(pilot.Armament);
+            float ww = SpacedW(weapon, s, 2f);
+            Spaced(cx - ww * 0.5f, y, weapon, Palette.Hud, s, 2f);
+        }
+
         if (Minimal)
             return;
 
@@ -680,8 +689,17 @@ internal static class Hud
         bool hover = pilot.Craft.Fm.HoverWanted;
         bool direct = Opt.Direct;
         bool armed = Opt.Weapons.On;
+        bool gta = pad && Opt.Gta;
         var rows = new List<(Prompt Key, string Does)>();
-        if (pad)
+        if (gta)
+        {
+            rows.Add((Prompt.Keys("", Glyphs.FlyStick), hover ? "FLY" : "ROLL AND PITCH"));
+            rows.Add((Prompt.Keys("", Glyphs.Name(PadButton.LB) + " " + Glyphs.Name(PadButton.RB)), hover ? "TURN" : "YAW"));
+            rows.Add((Prompt.Keys("", Glyphs.RightTrigger + " " + Glyphs.LeftTrigger), hover ? "UP AND DOWN" : "THROTTLE AND BRAKE"));
+            rows.Add((Prompt.Keys("", Glyphs.AimStick), "CAMERA"));
+            rows.Add((Prompt.Of(Act.Boost), hover ? "FAST" : "AFTERBURNER"));
+        }
+        else if (pad)
         {
             rows.Add((Prompt.Keys("", Glyphs.AimStick), direct && !hover ? "STICK" : hover ? "TURN AND AIM" : "STEER"));
             rows.Add((Prompt.Keys("", Glyphs.FlyStick), hover ? "FLY" : direct ? "THROTTLE AND RUDDER" : "THROTTLE AND ROLL"));
@@ -709,14 +727,20 @@ internal static class Hud
         }
 
         rows.Add((Prompt.Of(Act.Mode), hover ? "WINGS" : "HOVER"));
-        if (armed)
+        if (armed && gta)
+        {
+            rows.Add((Prompt.Of(Act.Fire), "FIRE " + Pilot.WeaponName(pilot.Armament)));
+            rows.Add((Prompt.Of(Act.Weapon), "SWITCH WEAPON"));
+        }
+        else if (armed)
         {
             rows.Add((Prompt.Of(Act.Gun), "GUNS"));
             rows.Add((Prompt.Of(Act.Cannon), "CANNON"));
             rows.Add((Prompt.Of(Act.Lock), "HOLD TO LOCK, LET GO FOR MISSILES"));
         }
 
-        rows.Add((Prompt.Of(Act.Look), "LOOK AROUND"));
+        if (!gta)
+            rows.Add((Prompt.Of(Act.Look), "LOOK AROUND"));
         rows.Add((Prompt.Of(Act.Camera), "CAMERA"));
         rows.Add((Prompt.Of(Act.Lift), pilot.Craft.Carrying ? "DROP BATMOBILE" : "HOOK BATMOBILE"));
         rows.Add((Prompt.Of(Act.Bail), pilot.Remote ? "END REMOTE" : "BAIL OUT"));
