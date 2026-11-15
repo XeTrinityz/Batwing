@@ -168,7 +168,7 @@ internal sealed partial class Pilot
     {
         Vector2 turn = listening ? Steer(dt) : Vector2.Zero;
         bool direct = Opt.Direct;
-        var input = new FlightInput { Assist = Opt.AssistLevel, Heading = _aimYaw / Geo.Deg, Hold = Opt.HoverHold.On };
+        var input = new FlightInput { Assist = Opt.AssistLevel, Banking = Opt.BankLevel, Heading = _aimYaw / Geo.Deg, Hold = Opt.HoverHold.On };
         if (!listening)
         {
             input.Aim = direct ? Vector3.Zero : AimDir;

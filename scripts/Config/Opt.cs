@@ -10,7 +10,7 @@ internal static class Opt
 
     public static Command Call = null!, RemoteCall = null!, EscortCall = null!, LiftCall = null!, Reset = null!;
     public static Switch FlyIn = null!, Grapple = null!, HoverDrift = null!, HoverHold = null!, Crashes = null!, EscortOnBail = null!;
-    public static Pick Assist = null!;
+    public static Pick Assist = null!, BankStyle = null!;
     public static Dial TopSpeed = null!;
 
     public static Switch CatchEject = null!, DropDamage = null!;
@@ -22,7 +22,8 @@ internal static class Opt
 
     public static Switch Controller = null!, PadInvert = null!, Rumble = null!;
     public static Dial PadAim = null!, Deadzone = null!, RumbleStrength = null!;
-    public static Pick PadResponse = null!, StickLayout = null!, ButtonStyle = null!, MenuChord = null!;
+    public static Pick PadResponse = null!, StickLayout = null!, ButtonStyle = null!;
+    public static Switch CommandWheel = null!;
 
     public static Pick Camera = null!, HudColour = null!, HudLayout = null!, SpeedUnit = null!;
     public static Switch Hud = null!, Nav = null!, Hints = null!, HideGameHud = null!;
@@ -35,6 +36,8 @@ internal static class Opt
     public static bool Direct => ControlMode.Index == 1;
 
     public static bool DeckOnGauntlet => DeckOn.Index == 0;
+
+    public static Banking BankLevel => (Banking)BankStyle.Index;
 
     public static Assist AssistLevel => Assist.Index switch { 1 => Batwing.Assist.Standard, 2 => Batwing.Assist.Off, _ => Batwing.Assist.Full };
 
@@ -63,6 +66,8 @@ internal static class Opt
         EscortCall.Live = () => Wing.EscortLabel;
         Assist = AddPick(flight, "assist", "FLIGHT ASSIST", new[] { "full", "standard", "off" }, new[] { "FULL", "STANDARD", "OFF" }, 0,
             "FULL levels the wings, stops stalls and drops into hover when you slow right down. STANDARD stops stalls and keeps turns clean but leaves the rest to you. OFF gives no help at all and you can stall and fall.");
+        BankStyle = AddPick(flight, "banking", "BANKING", new[] { "normal", "gentle", "sharp" }, new[] { "NORMAL", "GENTLE", "SHARP" }, 0,
+            "How far mouse aim banks into a turn. GENTLE keeps the wings flatter and turns slower. SHARP rolls right over for the tightest turns. NORMAL is in between.");
         HoverHold = AddSwitch(flight, "hover_hold", "HOVER HOLD", true,
             "Let go of the sticks in hover and the Batwing holds its spot and height. Turn off to let it drift.");
         HoverDrift = AddSwitch(flight, "hover_drift", "HOVER DRIFT", true,
@@ -128,8 +133,8 @@ internal static class Opt
 
         Page pad = AddPage("controller", "CONTROLLER", "Controller settings and buttons.");
         Controller = AddSwitch(pad, "controller", "CONTROLLER", true, "Controller support. Turn off if the mod picks up a pad you don't want it to.");
-        MenuChord = AddPick(pad, "menu_chord", "COMMAND WHEEL", new[] { "ls+a", "ls+x", "lt+x", "lb+rb", "off" }, new[] { "LS + A", "LS + X", "LT + X", "LB + RB", "OFF" }, 0,
-            "Hold the first button and press the second to open the command wheel. LS means pressing the left stick in. Point the right stick at a command and let go of the first button to use it. The wheel has the call, remote, escort, strike, lift and this deck. On its own the first button still does what it does in the game. While flying, hold VIEW instead.");
+        CommandWheel = AddSwitch(pad, "command_wheel", "COMMAND WHEEL", true,
+            "Hold VIEW for the command wheel. Point a stick at a command and let go to use it. The wheel has the call, remote, escort, strike, lift and this deck. A quick tap of VIEW still opens the map. Turn off to leave VIEW to the game.");
         PadAim = AddDial(pad, "pad_aim", "AIM SPEED", 1f, 0.25f, 3f, 0.05f, Fmt.Times, "How fast the right stick aims and steers.");
         PadResponse = AddPick(pad, "pad_response", "AIM RESPONSE", new[] { "smooth", "linear", "precise" }, new[] { "SMOOTH", "LINEAR", "PRECISE" }, 0,
             "How the stick picks up speed as you push it. SMOOTH is gentle in the middle and quick at the edge. LINEAR is even all the way. PRECISE is slower in the middle still, for fine aiming.");

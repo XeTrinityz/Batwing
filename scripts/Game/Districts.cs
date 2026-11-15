@@ -186,11 +186,28 @@ internal static class Districts
         return best;
     }
 
-    // Outside the whole city by more than the margin, flat.
-    public static bool Outside(Vector3 at, float margin) =>
-        at.X < Low.X - margin || at.X > High.X + margin || at.Y < Low.Y - margin || at.Y > High.Y + margin;
+    // How far the point is outside the city, flat, measured to the nearest district box. 0 inside. The boxes
+    // join up with no gaps over the water between districts, so this is the real edge of Gotham.
+    public static float Away(Vector3 point, out Vector3 nearest)
+    {
+        float best = float.MaxValue;
+        nearest = point;
+        foreach (Cell listed in Map)
+        {
+            if (!Box(listed.Name, out Cell c))
+                continue;
 
-    public static Vector3 Middle => (Low + High) * 0.5f;
+            var on = new Vector3(Math.Clamp(point.X, c.Min.X, c.Max.X), Math.Clamp(point.Y, c.Min.Y, c.Max.Y), point.Z);
+            float d = Geo.FlatDistance(on, point);
+            if (d < best)
+            {
+                best = d;
+                nearest = on;
+            }
+        }
+
+        return best;
+    }
 
     private static bool Box(string name, out Cell c) => _seen.TryGetValue(name, out c) || _map.TryGetValue(name, out c);
 

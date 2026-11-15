@@ -10,7 +10,9 @@ internal sealed partial class Pilot
     private const float CrashSpeed = 2600f;
     private const float LandSpeed = 700f;
     private const float HullPoints = 400f;
-    private const float OutsideMargin = 30000f;
+    // How far past the edge of the city it can go before the warning, and how long after that it's turned back.
+    private const float OutsideMargin = 5000f;
+    private const float TurnBackAfter = 3f;
     private const float CeilingAbove = 30000f;
 
     private float _hull = 1f;
@@ -20,6 +22,7 @@ internal sealed partial class Pilot
     private bool _solidBelow = true, _loadingBelow;
     private float _noSolidFor, _outsideFor;
     private bool _away;
+    private Vector3 _home;
     private Every _cityCheck;
     private float _shotDamage;
     private Vector3 _shotFrom;
@@ -36,7 +39,7 @@ internal sealed partial class Pilot
 
     public bool Outside => _outsideFor > 0f;
 
-    public bool TurningBack => _outsideFor > 3f;
+    public bool TurningBack => _outsideFor > TurnBackAfter;
 
     public bool NothingBelow => _noSolidFor > 1.5f;
 
@@ -270,14 +273,14 @@ internal sealed partial class Pilot
     {
         Vector3 at = _fm.Position;
         if (_cityCheck.Elapsed(0.3))
-            _away = Districts.Under(at) == null && Districts.Outside(at, OutsideMargin);
+            _away = Districts.Away(at, out _home) > OutsideMargin;
 
         if (_away)
         {
             _outsideFor += dt;
-            if (_outsideFor > 3f)
+            if (_outsideFor > TurnBackAfter)
             {
-                Vector3 back = Districts.Middle - at;
+                Vector3 back = _home - at;
                 back.Z = 0f;
                 if (back.LengthSquared() > 1f)
                     _fm.Velocity += Vector3.Normalize(back) * (900f * dt * MathF.Min(_outsideFor - 2f, 3f));

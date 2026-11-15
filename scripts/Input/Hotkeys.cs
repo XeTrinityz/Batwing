@@ -12,7 +12,7 @@ internal static class Hotkeys
     // Hotkeys and the command wheel work on the same terms.
     public static bool Live => Shared.ScreenFree && World.InGame && !World.Paused;
 
-    public static bool StrikeHeld => (Live && Keyboard.IsDown(Controls.Key(Act.Strike))) || Wheel.StrikeHeld;
+    public static bool StrikeHeld => Live && Keyboard.IsDown(Controls.Key(Act.Strike));
 
     public static void Pressed(Keys key)
     {

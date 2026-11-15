@@ -40,9 +40,9 @@ the car.
 
 ## Controller
 
-Hold the left stick in (**LS**) and press **A** for the command wheel, or **L3** and **Cross** on a PlayStation pad. Point the right stick at a command and let go
-of the left stick to use it. The wheel has the call, remote control, escort, strike, lift and the settings deck. While
-flying, hold **View** for the wheel instead. The wheel can also be set to LS + X, LT + X or LB + RB in the settings deck.
+Everything the mod does on a controller is on one button. Hold **View** (the touchpad through Steam Input on a
+PlayStation pad) for the command wheel, point a stick at a command and let go to use it. The wheel has the call, remote
+control, escort, strike, lift and the settings deck. A quick tap of **View** still opens the map as normal.
 
 The pad rumbles with the guns, hits, the afterburner and landings. Every flight button can be changed in the settings
 deck, along with aim speed, aim response, stick deadzone, inverted pitch and swapped sticks. Prompts can show Xbox or

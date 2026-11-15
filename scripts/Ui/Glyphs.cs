@@ -8,7 +8,7 @@ internal static class Glyphs
     private static bool PlayStation => Opt.ButtonStyle.Index == 1;
 
     public static bool Bindable(PadButton b) => b is PadButton.A or PadButton.B or PadButton.X or PadButton.Y or PadButton.LB or PadButton.RB
-        or PadButton.LS or PadButton.RS or PadButton.Back or PadButton.Up or PadButton.Down or PadButton.Left or PadButton.Right;
+        or PadButton.LS or PadButton.RS or PadButton.Up or PadButton.Down or PadButton.Left or PadButton.Right;
 
     public static string Name(PadButton b) => b switch
     {

@@ -64,10 +64,6 @@ internal static class WheelView
                 TextCentre(lx, ly - TextH(s) * 0.5f, first, ink, s);
                 TextCentre(lx, ly + TextH(s) * 0.5f, rest, ink, s);
             }
-
-            string shortcut = Wheel.Shortcut(item);
-            if (shortcut.Length > 0 && !Wing.Piloting)
-                TextCentre(lx, ly + TextH(s) * 1.3f, shortcut, Palette.Faint, 0.36f);
         }
 
         Shapes.Disc(cx, cy, r0 - S(6f), Palette.Screen, 0.95f);

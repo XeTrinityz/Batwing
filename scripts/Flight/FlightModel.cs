@@ -9,6 +9,14 @@ internal enum Assist
     Full,
 }
 
+// How far mouse aim banks for a turn of a given size.
+internal enum Banking
+{
+    Normal,
+    Gentle,
+    Sharp,
+}
+
 // What the pilot, or an autopilot, asks of the flight model for one step.
 internal struct FlightInput
 {
@@ -40,6 +48,8 @@ internal struct FlightInput
     public bool Hold;
 
     public Assist Assist;
+
+    public Banking Banking;
 }
 
 // The Batwing's physics. It knows nothing about the game, so it can be run and tested on its own.
@@ -85,6 +95,13 @@ internal sealed class FlightModel
     // From the first angle off the aim big turns lean towards flat, by the second they're flat. Radians.
     private const float FlatFrom = 1.6f;
     private const float FlatFull = 2.4f;
+
+    // The steepest bank mouse aim rolls to, radians.
+    private const float MaxAimBank = 1.3f;
+
+    // The bank mouse aim allows for a turn starts at the first figure and grows by the second with how far off
+    // the aim is, radians per radian. Normal, gentle and sharp.
+    private static readonly (float From, float Per)[] Banks = { (0.55f, 1.6f), (0.35f, 0.9f), (MaxAimBank, 0f) };
 
     // Under this the wings can't turn the path, so mouse aim points the nose instead.
     private const float PathFrom = StallSpeed * 0.4f;
@@ -338,7 +355,7 @@ internal sealed class FlightModel
             Vector3 aim = Vector3.Normalize(input.Aim);
             float path = Math.Clamp((Airspeed - PathFrom) / (PathFull - PathFrom), 0f, 1f);
             Vector3 nose = NoseRates(aim);
-            rates = path <= 0f ? nose : Vector3.Lerp(nose, PathRates(aim, input.Assist), Smooth(path));
+            rates = path <= 0f ? nose : Vector3.Lerp(nose, PathRates(aim, input.Assist, input.Banking), Smooth(path));
         }
 
         // Leaning on the roll keys takes over the roll bit by bit, so a light touch keeps the auto bank.
@@ -356,7 +373,7 @@ internal sealed class FlightModel
         return new Vector3(-Bank() * LevelGain, 2.2f * MathF.Atan2(dz, dx), 1.6f * MathF.Atan2(dy, dx));
     }
 
-    private Vector3 PathRates(Vector3 aim, Assist assist)
+    private Vector3 PathRates(Vector3 aim, Assist assist, Banking banking)
     {
         float speed = MathF.Max(Airspeed, 1f);
         Vector3 d = Velocity / speed;
@@ -384,35 +401,68 @@ internal sealed class FlightModel
         float most = GLimit * TurnShare * Gravity / MathF.Max(speed, StallSpeed);
         float turn = MathF.Min(err * PathGain, most);
 
-        // Small corrections slide the nose across with the rudder instead of banking, the way you'd line
-        // up a shot. Bigger ones bank into the turn.
-        Vector3 bend = n * (speed * turn);
+        Vector3 want = n * (speed * turn);
+        var g = new Vector3(0f, 0f, -Gravity);
+        Vector3 hold = -(g - d * Vector3.Dot(d, g));
+
+        // The rudder takes part of the turn by yawing the nose into it. Small corrections are all rudder, the way
+        // you'd line up a shot. Bigger turns bank, but only as far as suits the size of the turn, and the rudder
+        // makes up the rest so they still come round quickly.
+        (float from, float per) = Banks[(int)banking];
+        float bankMost = Math.Clamp(from + err * per, from, MaxAimBank);
+        float limit = Gravity * MathF.Tan(bankMost);
         Vector3 side = Right - d * Vector3.Dot(Right, d);
         float sideLength = side.Length();
+        Vector3 flatSide = Vector3.Cross(Vector3.UnitZ, d);
         float wantBeta = 0f;
+        Vector3 rudder = Vector3.Zero;
         if (sideLength > 1e-3f)
         {
             side /= sideLength;
             float flat = 1f - Smooth((err - SkidBelow) / (SkidFull - SkidBelow));
-            float sideways = Vector3.Dot(bend, side) * flat;
-            bend -= side * sideways;
-            wantBeta = Math.Clamp(-sideways / (SideForce * speed * speed), -SkidMost, SkidMost);
+            float skid = Vector3.Dot(want, side) * flat;
+            if (flatSide.LengthSquared() > 0.01f)
+            {
+                flatSide = Vector3.Normalize(flatSide);
+                float lateral = Vector3.Dot(want - side * skid, flatSide);
+                if (MathF.Abs(lateral) > limit)
+                    skid += (lateral - MathF.Sign(lateral) * limit) * Vector3.Dot(flatSide, side);
+            }
+
+            wantBeta = Math.Clamp(-skid / (SideForce * speed * speed), -SkidMost, SkidMost);
+            rudder = side * (-wantBeta * SideForce * speed * speed);
         }
 
-        // The lift that bends the path that much and holds it up against gravity.
-        var g = new Vector3(0f, 0f, -Gravity);
-        Vector3 lift = bend - (g - d * Vector3.Dot(d, g));
+        // The lift does the rest of the turn and holds it up against gravity. Whatever the rudder pushes up or
+        // down when banked is taken back out, so turns hold their height.
+        Vector3 lift = want - rudder + hold;
+        if (flatSide.LengthSquared() > 0.5f)
+        {
+            float lateral = Vector3.Dot(lift, flatSide);
+            if (MathF.Abs(lateral) > limit)
+                lift -= flatSide * (lateral - MathF.Sign(lateral) * limit);
+        }
+
+        // The path turns as fast as the lift and rudder together take it.
+        Vector3 spinNow = Vector3.Cross(d, lift - hold + rudder) / speed;
         Vector3 across = lift - Forward * Vector3.Dot(lift, Forward);
         float size = across.Length();
         float roll = MathF.Atan2(Vector3.Dot(across, Right), Vector3.Dot(across, Up));
 
-        // Lift wanted under the wings. Upright and asking for a light push, it pushes rather than rolling over.
+        // Lift wanted below the horizon means pushing the nose down, never rolling over to pull. The push is held
+        // to what the wings take by the angle of attack limit, so a steep dive just takes a moment longer. Lift that
+        // is only under the wings because they're banked, like turning back out of a turn, means rolling across.
         float sign = 1f;
-        if (MathF.Abs(roll) > MathF.PI * 0.5f && lift.Z <= 0f && Up.Z > 0f && size < NegativeGLimit * Gravity * 0.7f)
+        if (MathF.Abs(roll) > MathF.PI * 0.5f && lift.Z < 0f)
         {
             roll -= MathF.PI * MathF.Sign(roll);
             sign = -1f;
         }
+
+        // Mouse aim never banks past the most a flat turn needs. Upside down, like over the top of a loop, it
+        // rolls back upright.
+        float bank = Bank();
+        roll = Math.Clamp(bank + roll, -bankMost, bankMost) - bank;
 
         // Only pulls as hard as the wings are rolled round to where the lift has to go.
         // The engine pushes along the nose, so with the nose up it gives some lift as well.
@@ -424,7 +474,7 @@ internal sealed class FlightModel
         // The body turns with the path, as far as the wings are rolled in to turn it, plus what it takes to fix
         // the roll, the angle of attack and the slip. The airflow's own pull on the nose is cancelled out, or
         // the nose would settle a little off where it's asked.
-        Vector3 spin = Vector3.Cross(d, n) * (turn * lined);
+        Vector3 spin = spinNow * lined;
         float pull = AirflowPull();
         float p = -Vector3.Dot(spin, Forward) + RollGain * roll - RollDamp * Rates.X;
         float q = -Vector3.Dot(spin, Right) + AlphaGain * (wantAlpha - Alpha) + 5f * pull * Alpha * SpinUp.Y;

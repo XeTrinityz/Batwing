@@ -229,7 +229,7 @@ internal sealed class PadBind : Option
 
     public override string Toml => "\"" + Button + "\"";
 
-    public override string Takes => "A, B, X, Y, LB, RB, LS, RS, Back, Up, Down, Left, Right";
+    public override string Takes => "A, B, X, Y, LB, RB, LS, RS, Up, Down, Left, Right";
 }
 
 // A row that does something rather than holding a setting.

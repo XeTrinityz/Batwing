@@ -2,8 +2,9 @@ using System.Numerics;
 
 namespace Trinity.Batwing;
 
-// The command wheel on the controller. Hold the wheel buttons, point a stick at a command and let go. A face
-// button while the wheel buttons are held is a shortcut that skips the wheel.
+// The command wheel on the controller, on the View button. Hold View to open it, point a stick at a command and
+// let go to use it. A quick tap of View still opens the map. The game never sees View while the wheel is on, so
+// the tap opens the map through the game's own command.
 internal static class Wheel
 {
     public enum Item
@@ -17,15 +18,14 @@ internal static class Wheel
     }
 
     public const int Count = 6;
-    private const float OpenAfter = 0.18f;
+    private const float HoldSeconds = 0.25f;
     private const float Pick = 0.55f;
-    private const string ShortcutHold = "wheel shortcuts";
+    private const string ViewHold = "view";
     private const string WheelHold = "wheel";
-
-    private static readonly string[] ShortcutNames = { "XboxTypeS_A", "XboxTypeS_B", "XboxTypeS_X", "XboxTypeS_Y", "XboxTypeS_DPad_Down" };
+    private static readonly string[] ViewName = { "XboxTypeS_Back" };
 
     private static float _held = -1f;
-    private static bool _shortcut, _waitRelease;
+    private static bool _waitRelease;
 
     public static bool Open { get; private set; }
 
@@ -33,53 +33,23 @@ internal static class Wheel
 
     public static double OpenedAt { get; private set; }
 
-    // While the wheel buttons and X are held the escort keeps marking strike targets.
-    public static bool StrikeHeld => _shortcut && Pad.Down(PadButton.X);
-
-    // Held to keep the wheel open, and pressed while it's held to open it. LB and RB together are both.
-    private static string Choice => Opt.MenuChord.Key;
-
-    private static bool Paired => Choice == "lb+rb";
-
-    private static bool Off => Choice == "off";
-
-    // Pressing a stick in can tilt it a little, so with a stick held only the other one picks.
-    private static bool StickHeld => !Flying && Choice is "ls+x" or "ls+a";
-
-    // Flying, these buttons are flight controls, so View opens the wheel there. The game doesn't use it in the cockpit.
-    private static bool Flying => Wing.Piloting && !Paired && !Off;
-
-    private static bool ModifierDown => Flying ? Pad.Down(PadButton.Back) : Choice switch
-    {
-        "ls+x" or "ls+a" => Pad.Down(PadButton.LS),
-        "lt+x" => Pad.LeftTrigger > 0.5f,
-        "lb+rb" => Pad.Down(PadButton.LB | PadButton.RB),
-        _ => false,
-    };
-
-    private static PadButton Trigger => Choice is "ls+a" ? PadButton.A : PadButton.X;
-
-    private static string TriggerName => Trigger == PadButton.X ? "XboxTypeS_X" : "XboxTypeS_A";
+    private static bool On => Opt.CommandWheel.On;
 
     // The press that opens the wheel, for the deck to close itself on.
-    public static bool ChordPressed => !Off && (Flying ? Pad.Pressed(PadButton.Back) : Paired ? Pad.Pressed(PadButton.LB | PadButton.RB) : ModifierDown && Pad.Pressed(Trigger));
+    public static bool ChordPressed => On && Pad.Pressed(PadButton.Back);
 
-    public static string ChordName => Flying ? Glyphs.Name(PadButton.Back) : Choice switch
-    {
-        "ls+x" => Glyphs.Name(PadButton.LS) + " + " + Glyphs.Name(PadButton.X),
-        "ls+a" => Glyphs.Name(PadButton.LS) + " + " + Glyphs.Name(PadButton.A),
-        "lt+x" => Glyphs.LeftTrigger + " + " + Glyphs.Name(PadButton.X),
-        "lb+rb" => Glyphs.Name(PadButton.LB | PadButton.RB),
-        _ => "",
-    };
+    public static string ChordName => On ? "HOLD " + Glyphs.Name(PadButton.Back) : "";
 
     public static void Frame(float dt)
     {
-        bool held = !Off && ModifierDown;
+        // View is the mod's while it's in the world with the screen free. Paused or in another menu it's the game's.
+        GameKeys.Hold(ViewHold, On && Hotkeys.Live, Array.Empty<Keys>(), ViewName);
 
+        bool held = On && Pad.Down(PadButton.Back);
         if (Deck.IsOpen)
         {
             Close();
+            _held = -1f;
             _waitRelease |= held;
             return;
         }
@@ -88,8 +58,10 @@ internal static class Wheel
         {
             if (Open)
                 Run();
+            else if (_held >= 0f && !_waitRelease)
+                Map();
+            _held = -1f;
             _waitRelease = false;
-            Rest();
             return;
         }
 
@@ -97,6 +69,7 @@ internal static class Wheel
         if (_waitRelease || !Hotkeys.Live)
         {
             Close();
+            _held = -1f;
             _waitRelease = true;
             return;
         }
@@ -107,41 +80,18 @@ internal static class Wheel
             return;
         }
 
-        if (Flying)
-        {
+        _held = _held < 0f ? 0f : _held + dt;
+        if (_held >= HoldSeconds)
             Show();
-            return;
-        }
+    }
 
-        if (!Paired)
-        {
-            // With the modifier down, the button that opens the wheel is the mod's and the game doesn't get it.
-            // The modifier on its own is still the game's.
-            GameKeys.Hold(ShortcutHold, true, Array.Empty<Keys>(), new[] { TriggerName });
-            if (Pad.Pressed(Trigger))
-                Show();
-            return;
-        }
-
-        if (_held < 0f && !_shortcut)
-            _held = 0f;
-
-        // On foot or in the car the face buttons under the wheel are shortcuts, and the game doesn't get them.
-        // Flying they're the flight controls, so there it's the wheel only.
-        GameKeys.Hold(ShortcutHold, !Wing.Piloting, Array.Empty<Keys>(), ShortcutNames);
-        if (!Wing.Piloting && Shortcut())
-        {
-            _shortcut = true;
-            _held = -1f;
-            return;
-        }
-
-        if (_shortcut)
+    // A tap of View is the game's map, or the upgrades screen when there's one waiting.
+    private static void Map()
+    {
+        if (!Hotkeys.Live || World.Pc is not { } pc)
             return;
 
-        _held += dt;
-        if (_held >= OpenAfter)
-            Show();
+        Safe.Run("open map", pc.OpenLevelUpOrMap);
     }
 
     private static void Show()
@@ -161,7 +111,7 @@ internal static class Wheel
             return;
         }
 
-        Vector2 v = StickHeld || Pad.RightRaw.Length() > Pad.LeftRaw.Length() ? Pad.RightRaw : Pad.LeftRaw;
+        Vector2 v = Pad.RightRaw.Length() > Pad.LeftRaw.Length() ? Pad.RightRaw : Pad.LeftRaw;
         if (v.Length() > Pick)
         {
             float angle = MathF.Atan2(v.Y, v.X) * Geo.Deg;
@@ -206,24 +156,6 @@ internal static class Wheel
         }
     }
 
-    private static bool Shortcut()
-    {
-        if (Pad.Pressed(PadButton.Y))
-            Wing.CallPressed();
-        else if (Pad.Pressed(PadButton.B))
-            Wing.EscortPressed();
-        else if (Pad.Pressed(PadButton.A))
-            Wing.RemotePressed();
-        else if (Pad.Pressed(PadButton.X))
-            Wing.StrikePressed();
-        else if (Pad.Pressed(PadButton.Down))
-            Wing.LiftPressed();
-        else
-            return false;
-
-        return true;
-    }
-
     public static string Label(Item item) => item switch
     {
         Item.Call => Wing.CallLabel,
@@ -232,16 +164,6 @@ internal static class Wheel
         Item.Strike => "STRIKE",
         Item.Lift => Wing.LiftLabel,
         _ => "SETTINGS",
-    };
-
-    public static string Shortcut(Item item) => !Paired ? "" : item switch
-    {
-        Item.Call => Glyphs.Name(PadButton.Y),
-        Item.Remote => Glyphs.Name(PadButton.A),
-        Item.Escort => Glyphs.Name(PadButton.B),
-        Item.Strike => Glyphs.Name(PadButton.X),
-        Item.Lift => Glyphs.Name(PadButton.Down),
-        _ => "",
     };
 
     // Whether a command makes sense right now. The wheel still shows it, dimmed.
@@ -254,23 +176,16 @@ internal static class Wheel
 
     private static void Close()
     {
-        if (Open)
-            Open = false;
-        GameKeys.Release(WheelHold);
+        Open = false;
         Selected = -1;
-    }
-
-    private static void Rest()
-    {
-        Close();
-        _held = -1f;
-        _shortcut = false;
-        GameKeys.Release(ShortcutHold);
+        GameKeys.Release(WheelHold);
     }
 
     public static void Shutdown()
     {
-        Rest();
+        Close();
+        GameKeys.Release(ViewHold);
+        _held = -1f;
         _waitRelease = false;
     }
 }
