@@ -22,3 +22,7 @@ desktop.ini
 .vs/
 .vscode/
 .idea/
+
+# Nexus upload script and its settings, kept local
+dev/nexus.py
+dev/nexus.toml
